@@ -1,0 +1,8 @@
+# Dependências do robô (Python 3.12+)
+requests>=2.31
+lxml>=5.0
+cryptography>=42.0
+openpyxl>=3.1
+
+# Opcional: espelho em PDF de cada nota (seção 8). Sem ele o robô segue normalmente, só não gera o PDF.
+# reportlab>=4.0

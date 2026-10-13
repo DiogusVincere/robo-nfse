@@ -1,0 +1,26 @@
+# Saída do robô (pastas por empresa, estado, relatórios)
+saida_nfse_tomados/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Certificados e chaves: nunca entram no repositório
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Configuração local e segredos
+.env
+
+# Planilhas geradas (as de exemplo ficam liberadas)
+*.xlsx
+!exemplos/*.xlsx
+
+# Editores e sistema
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
