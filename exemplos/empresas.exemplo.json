@@ -1,0 +1,44 @@
+[
+  {
+    "codigo": "100",
+    "razao": "Empresa Exemplo A Ltda",
+    "cnpj": "15881399000134",
+    "municipio_ibge": "3509502",
+    "responsavel": "Analista 1"
+  },
+  {
+    "codigo": "101",
+    "razao": "Empresa Exemplo B Ltda",
+    "cnpj": "86987973000181",
+    "municipio_ibge": "3509502",
+    "responsavel": "Analista 2"
+  },
+  {
+    "codigo": "102",
+    "razao": "Empresa Exemplo C Ltda",
+    "cnpj": "09114170000171",
+    "municipio_ibge": "3509502",
+    "responsavel": "Analista 1"
+  },
+  {
+    "codigo": "103",
+    "razao": "Empresa Exemplo D Ltda",
+    "cnpj": "75364556000166",
+    "municipio_ibge": "3509502",
+    "responsavel": "Analista 2"
+  },
+  {
+    "codigo": "104",
+    "razao": "Empresa Exemplo E Ltda",
+    "cnpj": "81518844000120",
+    "municipio_ibge": "3550308",
+    "responsavel": "Analista 1"
+  },
+  {
+    "codigo": "105",
+    "razao": "Empresa Exemplo F Ltda",
+    "cnpj": "72940557000113",
+    "municipio_ibge": "4106902",
+    "responsavel": "Analista 2"
+  }
+]
