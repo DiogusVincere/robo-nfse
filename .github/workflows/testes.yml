@@ -1,0 +1,56 @@
+name: testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    name: Python ${{ matrix.python }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Testes unitários (sem rede)
+        run: python -m unittest discover -s tests -v
+
+      - name: Demonstração offline (duas execuções na mesma pasta)
+        run: |
+          python robo_nfse_tomados.py --demo --saida /tmp/demo
+          echo "--- segunda execução: o que já foi escriturado não é declarado de novo ---"
+          python robo_nfse_tomados.py --demo --saida /tmp/demo 2>&1 | tee /tmp/demo-2.log
+          grep -q "já escriturada" /tmp/demo-2.log
+
+      - name: Conferir os relatórios gerados
+        run: |
+          ls -la /tmp/demo/_relatorios
+          test "$(ls /tmp/demo/_relatorios/*.xlsx | wc -l)" -eq 2
+          python - <<'EOF'
+          from pathlib import Path
+          from openpyxl import load_workbook
+          for arq in sorted(Path('/tmp/demo/_relatorios').glob('*.xlsx')):
+              wb = load_workbook(arq, read_only=True)
+              assert wb.sheetnames == ['Empresas', 'Notas'], wb.sheetnames
+              linhas = list(wb['Empresas'].iter_rows(values_only=True))
+              assert len(linhas) > 1, f'{arq.name} sem empresas'
+              print(f'{arq.name}: {len(linhas) - 1} empresa(s), {wb["Notas"].max_row - 1} nota(s)')
+              wb.close()
+          EOF
