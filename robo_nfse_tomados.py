@@ -46,6 +46,7 @@ COMO RODAR
 ----------
     pip install requests lxml cryptography openpyxl
     python robo_nfse_tomados.py --demo                         # fluxo completo com dados FICTÍCIOS, offline
+    python robo_nfse_tomados.py --interface   # página local no navegador: certificado, competência, zip
     python robo_nfse_tomados.py --competencia 09/2026 --empresas empresas.json --saida ./saida
                                                                # real: exige certificados e configuração
 
@@ -401,6 +402,7 @@ class ClienteSaoPaulo:
                     raise RuntimeError(f"web service de SP: [{local(retorno, 'Codigo')}] {local(retorno, 'Descricao')}")
                 nfes = [e for e in retorno.iter() if isinstance(e.tag, str) and etree.QName(e).localname == 'NFe']
                 xmls += [etree.tostring(n, encoding='UTF-8').decode('utf-8') for n in nfes]
+                log.info('Nota Paulistana: página %d, %d nota(s)', pagina, len(nfes))
                 if len(nfes) < self.POR_PAGINA:
                     break
         return xmls
@@ -425,6 +427,8 @@ class ClienteNacional:
 
     def distribuir(self, cert: CertificadoA1, senha: str, ultimo_nsu: int) -> tuple[list[dict], int]:
         docs, nsu = [], ultimo_nsu
+        log.info('Sistema Nacional: distribuição a partir do NSU %d%s', ultimo_nsu + 1,
+                 '' if ultimo_nsu else ' (primeira vez: percorre o histórico inteiro, pode demorar)')
         with sessao_mtls(cert, senha) as sess:
             tentativas = 0
             for chamada in range(400):
@@ -442,11 +446,13 @@ class ClienteNacional:
                     espera = self.BACKOFF[tentativas]
                     with contextlib.suppress(Exception):
                         espera = max(espera, int(r.headers.get('Retry-After') or 0))
+                    log.warning('Sistema Nacional respondeu %s — aguardando %ds antes de tentar de novo', status, espera)
                     time.sleep(espera)
                     tentativas += 1
                     continue
                 tentativas = 0
                 if status == 404:                                        # nada novo a partir deste NSU
+                    log.info('Sistema Nacional: nada novo a partir do NSU %d', nsu + 1)
                     break
                 r.raise_for_status()
                 corpo = r.json()
@@ -458,6 +464,7 @@ class ClienteNacional:
                     docs.append({'nsu': int(item.get('NSU') or 0), 'chave': item.get('ChaveAcesso'),
                                  'tipo': str(item.get('TipoDocumento') or ''),
                                  'xml': self._decodifica(item.get('ArquivoXml') or '')})
+                log.info('Sistema Nacional: lote até o NSU %d, %d documento(s) até agora', nsu, len(docs))
                 if len(lote) < self.LOTE:
                     break
         return docs, nsu
@@ -841,6 +848,7 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
     """ETAPA 1+2 de uma empresa: busca nas duas fontes, fica só com o que é TOMADO por ela e da competência pedida;
     o resto do Nacional vai para o arquivo. Usa também o que já tinha sido arquivado em execuções anteriores."""
     notas: list[Nota] = []
+    canceladas: set[str] = set()
     if cert is None:
         raise RuntimeError('sem certificado A1 válido')
     senha = senhas.senha(empresa.cnpj)
@@ -861,6 +869,19 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
                     estado.arquivar(empresa.cnpj, n)
         estado.guardar_nsu(empresa.cnpj, ultimo)                       # só depois de tudo salvo
     notas += [nota_nacional(x) for x in estado.arquivadas(empresa.cnpj, comp)]
+    # O Nacional é incremental: o que veio numa execução anterior desta competência já está salvo na pasta da
+    # empresa e não vem de novo. Entra aqui, para o relatório ficar completo em qualquer rodada (e cancelamento
+    # que chegou agora vale para a nota antiga).
+    if empresa.pasta:
+        pasta_nacional = pasta_da_competencia(empresa.pasta, comp) / 'Tomados' / 'Tomados Portal Nacional'
+        vistas = {n.chave for n in notas}
+        for arquivo in (sorted(pasta_nacional.rglob('*.xml')) if pasta_nacional.is_dir() else []):
+            with contextlib.suppress(Exception):
+                n = nota_nacional(arquivo.read_text('utf-8'))
+                if n.chave and n.chave not in vistas and n.tomador_cnpj == empresa.cnpj and n.competencia == comp:
+                    n.cancelada = n.chave in canceladas or 'Canceladas' in arquivo.parts
+                    notas.append(n)
+                    vistas.add(n.chave)
     return notas
 
 
@@ -876,11 +897,15 @@ def salvar_xmls(notas: list[Nota], pasta_comp: Path) -> None:
 
 def executar(cfg: Config, comp: Competencia, empresas: list[Empresa], senhas: SenhaProvider,
              certificados: dict[str, CertificadoA1], portal: Optional[PortalMunicipal], fontes: dict,
-             extrator: Optional[Callable[[Empresa], list[Nota]]] = None) -> list[Path]:
-    """Roda o processo inteiro para a lista de empresas e devolve os relatórios gerados (um por responsável)."""
+             extrator: Optional[Callable[[Empresa], list[Nota]]] = None,
+             resultados: Optional[list] = None) -> list[Path]:
+    """Roda o processo inteiro para a lista de empresas e devolve os relatórios gerados (um por responsável).
+    Quem quiser o detalhe (a interface local, por exemplo) passa uma lista em `resultados`: ela é preenchida
+    com um ResultadoEmpresa por empresa."""
     estado = EstadoRobo(cfg.pasta_estado)
     progresso = Progresso(len(empresas))
-    resultados: list[ResultadoEmpresa] = []
+    if resultados is None:
+        resultados = []
     for i, empresa in enumerate(empresas):
         if i:
             time.sleep(cfg.pausa_entre_empresas)
@@ -974,7 +999,7 @@ class PortalSimulado(PortalMunicipal):
         return xmls, mapa
 
 
-def demonstracao(saida: Path) -> list[Path]:
+def demonstracao(saida: Path, resultados: Optional[list] = None) -> list[Path]:
     """Fluxo completo, offline, com empresas e notas FICTÍCIAS geradas aqui mesmo."""
     rnd = random.Random(42)
     comp = Competencia.anterior_a(dt.date.today())
@@ -1006,7 +1031,7 @@ def demonstracao(saida: Path) -> list[Path]:
 
     # rode duas vezes: na segunda, o que já foi escriturado aparece como "já escriturada" — nada é declarado em dobro
     return executar(cfg, comp, empresas, SenhaDoAmbiente(), {}, PortalSimulado(random.Random()), {},
-                    extrator=extrator)
+                    extrator=extrator, resultados=resultados)
 
 
 def carregar_empresas(arquivo: Path) -> list[Empresa]:
@@ -1023,9 +1048,16 @@ def main(argv=None):
     p.add_argument('--certificados', type=Path, help='pasta dos certificados A1 (uma subpasta por cliente)')
     p.add_argument('--saida', type=Path, default=Path('saida_nfse_tomados'))
     p.add_argument('--responsavel', help='só as empresas deste responsável')
+    p.add_argument('--interface', action='store_true',
+                   help='abre a interface local no navegador (certificado e senha não saem desta máquina)')
+    p.add_argument('--porta', type=int, default=None, help='porta da interface local (padrão: 8747)')
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
 
+    if a.interface:
+        from interface.servidor import iniciar, PORTA_PADRAO
+        iniciar(porta=a.porta or PORTA_PADRAO, abrir_navegador=True)
+        return
     if a.demo:
         for r in demonstracao(a.saida):
             log.info('relatório: %s', r)
