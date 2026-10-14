@@ -24,3 +24,7 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Pacote portátil (python build/empacotar.py)
+dist/
+build/pyinstaller/

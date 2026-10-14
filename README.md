@@ -5,9 +5,11 @@
 Extrai, organiza, classifica e escritura as notas fiscais de serviço (NFS-e) que uma empresa **tomou** no mês,
 sem navegador e sem repetir nada do que já foi feito.
 
-Versão de portfólio em arquivo único (`robo_nfse_tomados.py`): mostra a estrutura e a lógica do robô usado em
-produção num escritório contábil, sem credenciais, chaves, nomes de clientes nem endereços de sistemas privados.
-Roda de ponta a ponta no modo `--demo`, com dados fictícios e um portal simulado.
+Versão de portfólio: o motor inteiro em um arquivo (`robo_nfse_tomados.py`), que mostra a estrutura e a lógica do
+robô usado em produção num escritório contábil, sem credenciais, chaves, nomes de clientes nem endereços de sistemas
+privados. Roda de ponta a ponta no modo `--demo`, com dados fictícios e um portal simulado, e tem uma **interface
+local** (`--interface`, ou o executável da aba Releases) para buscar as notas de uma empresa de verdade com o
+certificado A1 dela, sem que o certificado saia da máquina.
 
 ## O problema
 
@@ -105,6 +107,39 @@ demo/
 └── _relatorios/Analista 1 09-2026.xlsx    um Excel por responsável: abas Empresas (resumo) e Notas (detalhe)
 ```
 
+## Interface local
+
+![Interface local: certificado, competência, andamento e resultado](docs/interface.jpg)
+
+```
+python robo_nfse_tomados.py --interface
+```
+
+Abre no navegador uma página servida por este mesmo processo, em `127.0.0.1`. A pessoa escolhe o `.pfx` da empresa
+tomadora, digita a senha, escolhe o município e a competência e clica em "Buscar". O servidor roda as etapas 1 a 3
+do robô (extração nas duas fontes, organização, classificação e relatório) numa thread, mostra o andamento ao vivo
+e devolve um **.zip** com a árvore `NFE/<ano>/<MM-AAAA>/Tomados/…`, os XML, os PDFs e o Excel, além da lista de
+notas na tela, com filtros por situação. Sem certificado à mão, o botão **"Ver com dados simulados"** roda a
+demonstração offline pela mesma tela.
+
+Para quem não tem Python: a aba [Releases](https://github.com/DiogusVincere/robo-nfse-tomados/releases) tem o
+pacote portátil para Windows (`Robo NFSe Tomados.exe` + `_internal\`, montado por `build\empacotar.py` com o
+PyInstaller). É descompactar e abrir; o navegador abre sozinho.
+
+O que foi pensado para o certificado:
+
+- O processo só escuta em `127.0.0.1` e a API exige um token aleatório gerado a cada execução, embutido na página.
+  Um site aberto em outra aba não consegue lê-lo, então não consegue chamar a API.
+- O `.pfx` vai para um arquivo temporário só durante a busca e é apagado no `finally`; a senha fica num
+  `SenhaProvider` em memória e é esquecida ao terminar; a chave privada em PEM só existe dentro do `sessao_mtls`.
+  Nada do certificado entra em log.
+- O que fica no disco de quem usa, de propósito: as notas baixadas e o último NSU de cada CNPJ, em
+  `%LOCALAPPDATA%\RoboNFSeTomados` (pastas `saida` e `estado`), para a próxima busca do mesmo CNPJ ser incremental.
+  A opção "buscar desde o início" descarta o NSU guardado.
+
+A escrituração (etapa 4) não entra na interface, pelo mesmo motivo da linha de comando: depende do portal de cada
+município (ver "Limitações").
+
 ## Uso real
 
 ```
@@ -182,6 +217,12 @@ sessão (`escriturar_empresa`) valem para qualquer implementação:
 
 `PortalSimulado` (seção 14) é uma implementação completa em memória, usada na demonstração e nos testes.
 
+**A interface local** fica fora do arquivo do motor, em `interface/`: `servidor.py` (servidor HTTP da biblioteca
+padrão, API JSON, a busca numa thread, o zip) e `web/` (`index.html`, `app.js`, `estilo.css` e a lista de
+municípios do IBGE). Ela só usa o que o motor expõe: `ler_certificado`, `Config`, `Empresa`, `executar` (com a
+lista `resultados`) e `demonstracao`. `build/` tem a receita do PyInstaller e o `empacotar.py` que gera o zip da
+aba Releases.
+
 ## Fontes públicas
 
 Os dois web services que o código consulta são públicos e documentados pelos próprios órgãos. Ambos exigem o
@@ -202,7 +243,7 @@ certificado A1 do tomador (mTLS).
 python -m unittest discover -s tests -v
 ```
 
-77 testes, nenhum acesso à rede, tudo em pastas temporárias (passam no Windows e no Linux). O que cobrem:
+83 testes, nenhum acesso à rede, tudo em pastas temporárias (passam no Windows e no Linux). O que cobrem:
 
 | Arquivo | Cobre |
 |---|---|
@@ -213,6 +254,7 @@ python -m unittest discover -s tests -v
 | `test_relatorio.py` | `gerar_relatorio` (abre com openpyxl, confere cabeçalhos e linhas), espelho em PDF com e sem reportlab, e-mail sem configuração não envia, `Progresso` |
 | `test_escrituracao.py` | `PortalSimulado` + `escriturar_empresa`: a trava barra o "defeito" 1 em 7, sessão perdida é renovada (e vira pendência quando nunca volta), ledger e consulta ao portal impedem duplicar, guia só com ISS retido, gravação não confirmada vira aviso; exportação renumerada; `executar` sem portal, com falha isolada e com empresa de outro município |
 | `test_demonstracao.py` | `demonstracao()` três vezes na mesma pasta com portal de semente fixa (2ª: só as barradas são gravadas, o resto "já escriturada"; 3ª: zero gravações), a demonstração como ela é, `main --demo`, `carregar_empresas` com o arquivo de exemplo |
+| `test_interface.py` | A interface local de verdade, pela rede local: página com o token, API sem token = 403, conferência do certificado (ok, senha errada, arquivo inválido, nada fica no disco), validações da busca, busca simulada com zip, busca "real" com fontes falsas (as duas notas sintéticas, totais, nomes dos arquivos no zip, saída persistente e segunda busca incremental), 409 para busca concorrente e `/api/encerrar` |
 | `test_certificado.py` | Certificados autoassinados gerados no teste pela `cryptography` (RSA 2048, PFX em memória): `assinar_enveloped` (estrutura `Signature/SignedInfo/Reference URI=""`, `DigestValue` = SHA-1 do C14N do documento sem a assinatura, assinatura verificada com a chave pública, adulteração detectada), `ler_certificado` pelo CN e pelo `otherName` ICP-Brasil, `certificados_por_cnpj` pulando o vencido, `sessao_mtls` criando e apagando os PEM |
 
 O workflow [`testes.yml`](.github/workflows/testes.yml) roda a suíte em Python 3.12 e 3.13 (Ubuntu), depois a
@@ -220,7 +262,7 @@ demonstração duas vezes e confere os dois relatórios.
 
 ## Limitações
 
-- **O portal municipal real não está incluído.** `PortalMunicipal` é só a interface; a implementação de produção
+- **O portal municipal real não está incluído.** `PortalMunicipal` é só a interface (a abstração do código); a implementação de produção
   depende da autenticação e do portal de cada prefeitura. Sem ela, o robô extrai, organiza, classifica e relata.
 - **RSA-SHA1** na assinatura XML é exigência do web service da Prefeitura de São Paulo, não uma escolha.
 - **Sem *retries* no SOAP**: o cliente de SP levanta o erro na primeira falha HTTP (o cliente Nacional tem backoff).
