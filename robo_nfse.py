@@ -287,7 +287,7 @@ class Nota:
     valor_servico: float
     aliquota: float                                     # em %, ex.: 2.0
     valor_iss: float
-    iss_retido: bool
+    iss_retido: bool = False                            # derivado de `retencoes` (ver __post_init__)
     cancelada: bool = False
     xml: str = dataclasses.field(default='', repr=False)
     papel: str = 'tomada'                               # 'tomada' (a empresa é o tomador) ou 'prestada' (é o prestador)
@@ -297,9 +297,12 @@ class Nota:
     valor_liquido: Optional[float] = None               # vLiq do Nacional; sem ele, valor do serviço − retenções
 
     def __post_init__(self):
-        if self.iss_retido and not self.retencoes.iss:   # quem monta a nota só com o booleano (demonstração, testes)
-            self.retencoes.iss = round(self.valor_iss, 2)
-            self.retencoes.iss_por = self.retencoes.iss_por or 'tomador'
+        r = self.retencoes
+        if r.iss or r.iss_por:                           # quem leu o XML preencheu a retenção: ela é a fonte da verdade
+            self.iss_retido = True
+            r.iss_por = r.iss_por or 'tomador'
+        elif self.iss_retido:                            # quem monta a nota só com o booleano (demonstração, testes)
+            r.iss, r.iss_por = round(self.valor_iss, 2), 'tomador'
         if self.valor_liquido is None:
             self.valor_liquido = round(self.valor_servico - self.retencoes.total, 2)
 
@@ -667,8 +670,8 @@ def nota_de_sp(xml: str, papel: str = 'tomada') -> Nota:
         tomador_nome=local(raiz, 'RazaoSocialTomador') or '',
         tomador_municipio_ibge=local(end_toma, 'Cidade') or '',
         valor_servico=para_float(local(raiz, 'ValorServicos')),
-        aliquota=aliquota, valor_iss=valor_iss, iss_retido=iss_retido,
-        retencoes=retencoes_de_sp(raiz, emissao, valor_iss, iss_retido),
+        aliquota=aliquota, valor_iss=valor_iss,
+        retencoes=retencoes_de_sp(raiz, emissao, valor_iss, iss_retido),     # é daqui que sai o iss_retido
         cancelada=(local(raiz, 'StatusNFe') or '') == 'C', papel=papel, xml=xml)
 
 
@@ -676,7 +679,14 @@ def nota_nacional(xml: str, cnpj_empresa: str = '') -> Nota:
     """Com `cnpj_empresa`, o papel sai do próprio XML: tomador → 'tomada', emitente → 'prestada', nenhum → ''."""
     raiz = etree.fromstring(xml.encode('utf-8'))
     emissao = _data(local(raiz, 'dhProc') or local(raiz, 'dhEmi'))       # competência = mês da EMISSÃO
-    emit = grupo(raiz, 'emit', 'prest', 'prestador')                     # na NFS-e autorizada o emitente é o prestador
+    # tpEmit 1 = o prestador emitiu (infNFSe/emit é ele). 2/3 = tomador ou intermediário emitiram: o prestador está em
+    # infDPS/prest. Hoje o ADN rejeita 2/3, mas o leiaute prevê — e ler emit nesse caso trocaria prestador por tomador.
+    if (local(raiz, 'tpEmit') or '1') == '1':
+        emit = grupo(raiz, 'emit', 'prest', 'prestador')
+    else:
+        emit = grupo(raiz, 'prest', 'prestador')
+        if emit is None:                                                   # (elemento lxml não vale como booleano)
+            emit = grupo(raiz, 'emit')
     toma = grupo(raiz, 'toma', 'tomador')
     chave = local(raiz, 'chNFSe') or next((e.get('Id') for e in raiz.iter()
                                            if re.fullmatch(r'NFS\d{47,53}', e.get('Id') or '')), '')
@@ -695,8 +705,7 @@ def nota_nacional(xml: str, cnpj_empresa: str = '') -> Nota:
         valor_servico=para_float(local(raiz, 'vServ')),
         aliquota=para_float(local(raiz, 'pAliqAplic') or local(raiz, 'pAliq')),
         valor_iss=valor_iss,
-        iss_retido=tp_ret_iss in ('2', '3'),                                 # 1 = não retido, 2 = tomador, 3 = intermediário
-        retencoes=retencoes_nacional(raiz, valor_iss, tp_ret_iss),
+        retencoes=retencoes_nacional(raiz, valor_iss, tp_ret_iss),           # é daqui que sai o iss_retido
         valor_liquido=para_float(vliq) if vliq is not None else None,
         xml=xml)
     if cnpj_empresa:
@@ -1093,7 +1102,7 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
         sp = fontes['SP']
         if 'tomada' in papeis:
             notas += [nota_de_sp(x, 'tomada') for x in sp.consultar_recebidas(cert, senha, comp)]
-        if 'prestada' in papeis and hasattr(sp, 'consultar_emitidas'):
+        if 'prestada' in papeis:
             notas += [nota_de_sp(x, 'prestada') for x in sp.consultar_emitidas(cert, senha, comp)]
     if 'Nacional' in fontes:
         docs, ultimo = fontes['Nacional'].distribuir(cert, senha, estado.ultimo_nsu(empresa.cnpj))
@@ -1306,13 +1315,14 @@ def demonstracao(saida: Path, resultados: Optional[list] = None) -> list[Path]:
                      iss_retido=rnd.random() < 0.3, cancelada=rnd.random() < 0.08,
                      xml=f'<NFSe><nNFSe>{k}</nNFSe><demo>fictícia</demo></NFSe>')
             notas.append(n)
-        if notas:                                                       # a mesma nota pelas duas fontes (dedup)
-            notas.append(dataclasses.replace(notas[0], fonte='SP' if notas[0].fonte == 'Nacional' else 'Nacional'))
         ret = random.Random(f'retencoes-{e.codigo}')                    # retenções federais nas tomadas
         for n in notas:
             r = retencoes_ficticias(ret, n.valor_servico)
             r.iss, r.iss_por = n.retencoes.iss, n.retencoes.iss_por
             n.retencoes, n.valor_liquido = r, round(n.valor_servico - r.total, 2)
+        if notas:                                                       # a mesma nota pelas duas fontes (dedup),
+            notas.append(dataclasses.replace(notas[0], fonte='SP' if notas[0].fonte == 'Nacional' else 'Nacional'))
+            notas[-1].retencoes = dataclasses.replace(notas[0].retencoes)   # com as MESMAS retenções da original
         pre = random.Random(f'prestadas-{e.codigo}')                    # o que a empresa PRESTOU
         for k in range(pre.randint(2, 6)):
             valor = round(pre.uniform(500, 20000), 2)

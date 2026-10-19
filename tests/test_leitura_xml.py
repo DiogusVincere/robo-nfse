@@ -409,5 +409,33 @@ class TestClientesSemRede(unittest.TestCase):
         self.assertEqual(dec(base64.b64encode(gzip.compress(b'<a>gz</a>')).decode()), '<a>gz</a>')
 
 
+class TestEmitenteQueNaoEOPrestador(unittest.TestCase):
+    """tpEmit 2 (tomador emitiu) ou 3 (intermediário): infNFSe/emit não é o prestador — ele está em infDPS/prest."""
+
+    def test_tp_emit_2_le_o_prestador_da_dps(self):
+        xml = XML_NACIONAL.replace('<tpEmit>1</tpEmit>', '<tpEmit>2</tpEmit>') \
+                          .replace(f'<emit><CNPJ>{suporte.CNPJ_PRESTADOR}</CNPJ><xNome>Prestador Exemplo 2</xNome>',
+                                   f'<emit><CNPJ>{suporte.CNPJ_A}</CNPJ><xNome>Empresa Exemplo A Ltda</xNome>') \
+                          .replace('<prest><CNPJ>99999999999999</CNPJ></prest>',
+                                   f'<prest><CNPJ>{suporte.CNPJ_PRESTADOR}</CNPJ><xNome>Prestador Exemplo 2</xNome>'
+                                   '<end><endNac><cMun>3304557</cMun></endNac></end></prest>')
+        n = robo.nota_nacional(xml, suporte.CNPJ_A)
+        self.assertEqual(n.prestador_cnpj, suporte.CNPJ_PRESTADOR)          # do prest, não do emit (que é o tomador)
+        self.assertEqual(n.prestador_nome, 'Prestador Exemplo 2')
+        self.assertEqual(n.prestador_municipio_ibge, '3304557')
+        self.assertEqual(n.tomador_cnpj, suporte.CNPJ_A)
+        self.assertEqual(n.papel, 'tomada')
+        self.assertEqual(robo.nota_nacional(xml, suporte.CNPJ_PRESTADOR).papel, 'prestada')
+
+    def test_tp_emit_3_sem_prest_cai_no_emit(self):
+        xml = XML_NACIONAL.replace('<tpEmit>1</tpEmit>', '<tpEmit>3</tpEmit>') \
+                          .replace('<prest><CNPJ>99999999999999</CNPJ></prest>', '')
+        self.assertEqual(robo.nota_nacional(xml).prestador_cnpj, suporte.CNPJ_PRESTADOR)
+
+    def test_sem_tp_emit_vale_o_emit(self):
+        xml = XML_NACIONAL.replace('<tpEmit>1</tpEmit>', '')
+        self.assertEqual(robo.nota_nacional(xml).prestador_cnpj, suporte.CNPJ_PRESTADOR)
+
+
 if __name__ == '__main__':
     unittest.main()

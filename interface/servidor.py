@@ -59,9 +59,13 @@ def pasta_de_estado() -> Path:
     """Onde o robô guarda o último NSU por CNPJ entre execuções (fora da pasta temporária da busca)."""
     base = os.environ.get('LOCALAPPDATA') or os.environ.get('XDG_DATA_HOME') or str(Path.home() / '.local' / 'share')
     nova, antiga = Path(base) / 'RoboNFSe', Path(base) / 'RoboNFSeTomados'
-    if antiga.is_dir() and not nova.exists():             # versão 1.x: mesma estrutura, só o nome mudou
-        with contextlib.suppress(OSError):
-            antiga.rename(nova)
+    # Versão 1.x: mesma estrutura, só o nome da pasta mudou. Move subpasta a subpasta, porque a nova já pode existir
+    # (o executável cria RoboNFSe para o interface.log antes de o servidor subir).
+    for sub in ('estado', 'saida'):
+        if (antiga / sub).is_dir() and not (nova / sub).exists():
+            with contextlib.suppress(OSError):
+                nova.mkdir(parents=True, exist_ok=True)
+                (antiga / sub).rename(nova / sub)
     return nova / 'estado'
 
 

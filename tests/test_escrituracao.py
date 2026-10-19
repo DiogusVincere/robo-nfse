@@ -7,9 +7,10 @@ import unittest
 from pathlib import Path
 
 try:
-    from . import suporte
+    from . import suporte, test_leitura_xml as tl
 except ImportError:
     import suporte
+    import test_leitura_xml as tl
 
 robo = suporte.robo
 nota = suporte.nota
@@ -257,6 +258,72 @@ class TestExecutar(Base):
         self.assertEqual(empresas['104']['Fora do município'], 2)
         self.assertEqual(empresas['104']['Escrituradas agora'], 0)
         self.assertTrue(all(d['Situação'].startswith('fora do município') for d in detalhe))
+
+
+class SenhaQualquer(robo.SenhaProvider):
+    def senha(self, cnpj):
+        return 'x'
+
+
+class NacionalDeMentira:
+    """Entrega os documentos uma vez (NSU 1 e 2); depois, nada novo."""
+
+    def __init__(self, docs):
+        self.docs = docs
+
+    def distribuir(self, cert, senha, ultimo_nsu):
+        novos = [d for d in self.docs if d['nsu'] > ultimo_nsu]
+        return novos, max([ultimo_nsu] + [d['nsu'] for d in novos])
+
+
+class TestExtrairEmpresa(Base):
+    """Seção 13, extrair_empresa com um Nacional de mentira: o papel que não foi pedido vai para o arquivo do estado e
+    volta quando for pedido — nada do que o NSU trouxe se perde."""
+
+    def setUp(self):
+        super().setUp()
+        self.empresa.pasta = self.raiz / '100'
+        self.cert = robo.CertificadoA1(self.raiz / 'nao-existe.pfx', suporte.CNPJ_A, 'EMPRESA EXEMPLO A LTDA',
+                                       robo.dt.datetime(2030, 1, 1, tzinfo=robo.dt.timezone.utc))
+        self.docs = [{'nsu': 1, 'chave': tl.CHAVE_NACIONAL, 'tipo': 'NFSE', 'xml': tl.XML_NACIONAL},      # tomada
+                     {'nsu': 2, 'chave': tl.CHAVE_PRESTADA, 'tipo': 'NFSE', 'xml': tl.XML_PRESTADA}]      # prestada
+
+    def extrair(self, papeis, fonte):
+        notas = robo.extrair_empresa(self.empresa, COMP, self.cert, SenhaQualquer(), self.estado,
+                                     {'Nacional': fonte}, papeis)
+        robo.salvar_xmls(notas, robo.pasta_da_competencia(self.empresa.pasta, COMP))   # como o executar faz
+        return notas
+
+    def test_papel_nao_pedido_vai_para_o_arquivo_e_volta_depois(self):
+        fonte = NacionalDeMentira(self.docs)
+        so_tomadas = self.extrair(('tomada',), fonte)
+        self.assertEqual([(n.numero, n.papel) for n in so_tomadas], [('88', 'tomada')])
+        self.assertEqual(self.estado.ultimo_nsu(suporte.CNPJ_A), 2)         # o NSU andou pelos dois documentos
+        arquivo = self.cfg.pasta_estado / 'arquivo' / suporte.CNPJ_A / '09-2026'
+        self.assertEqual([p.name for p in arquivo.glob('*.xml')], [f'{tl.CHAVE_PRESTADA}.xml'])   # a prestada ficou guardada
+        # 2ª execução, agora pedindo as prestadas: o Nacional não manda nada novo, e mesmo assim a prestada aparece
+        so_prestadas = self.extrair(('prestada',), fonte)
+        self.assertEqual([(n.numero, n.papel) for n in so_prestadas], [('501', 'prestada')])
+        self.assertEqual(so_prestadas[0].retencoes.total, 171.5)
+        # 3ª execução, as duas: a tomada vem da pasta da empresa, a prestada do arquivo — e só uma vez cada
+        ambas = self.extrair(robo.PAPEIS, fonte)
+        self.assertEqual(sorted((n.numero, n.papel) for n in ambas), [('501', 'prestada'), ('88', 'tomada')])
+
+    def test_competencia_diferente_tambem_e_arquivada(self):
+        outra = robo.Competencia(2026, 10)
+        docs = [{'nsu': 1, 'chave': tl.CHAVE_NACIONAL, 'tipo': 'NFSE',
+                 'xml': tl.XML_NACIONAL.replace('<dhProc>2026-09-30T23:59:00-03:00</dhProc>', '')}]   # dhEmi 01/10
+        notas = robo.extrair_empresa(self.empresa, COMP, self.cert, SenhaQualquer(), self.estado,
+                                     {'Nacional': NacionalDeMentira(docs)}, robo.PAPEIS)
+        self.assertEqual(notas, [])
+        self.assertEqual(len(self.estado.arquivadas(suporte.CNPJ_A, outra)), 1)
+        depois = robo.extrair_empresa(self.empresa, outra, self.cert, SenhaQualquer(), self.estado,
+                                      {'Nacional': NacionalDeMentira(docs)}, robo.PAPEIS)
+        self.assertEqual([n.numero for n in depois], ['88'])
+
+    def test_sem_certificado_e_erro(self):
+        with self.assertRaises(RuntimeError):
+            robo.extrair_empresa(self.empresa, COMP, None, SenhaQualquer(), self.estado, {}, robo.PAPEIS)
 
 
 if __name__ == '__main__':

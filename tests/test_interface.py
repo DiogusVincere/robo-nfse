@@ -283,5 +283,36 @@ class TestInterface(unittest.TestCase):
             outro.server_close()
 
 
+class TestPastaDeEstado(unittest.TestCase):
+    """A pasta da versão 1.x (RoboNFSeTomados) é migrada subpasta a subpasta — inclusive quando a nova já existe,
+    que é o caso do executável (ele cria RoboNFSe para o interface.log antes de o servidor subir)."""
+
+    def test_migra_mesmo_com_a_pasta_nova_ja_criada(self):
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+            antiga = Path(tmp) / 'RoboNFSeTomados'
+            (antiga / 'estado').mkdir(parents=True)
+            (antiga / 'estado' / 'estado.json').write_text('{"nsu": {"1": 7}, "ledger": {}}', 'utf-8')
+            (antiga / 'saida' / '1').mkdir(parents=True)
+            nova = Path(tmp) / 'RoboNFSe'
+            nova.mkdir()
+            (nova / 'interface.log').write_text('log do executável', 'utf-8')
+            self.assertEqual(iface.pasta_de_estado(), nova / 'estado')
+            self.assertEqual((nova / 'estado' / 'estado.json').read_text('utf-8'), '{"nsu": {"1": 7}, "ledger": {}}')
+            self.assertTrue((nova / 'saida' / '1').is_dir())
+            self.assertFalse((antiga / 'estado').exists())
+            self.assertTrue((nova / 'interface.log').exists())                # o que já estava na nova fica
+            # segunda chamada: nada a migrar, nada muda
+            self.assertEqual(iface.pasta_de_estado(), nova / 'estado')
+
+    def test_sem_pasta_antiga(self):
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+            self.assertEqual(iface.pasta_de_estado(), Path(tmp) / 'RoboNFSe' / 'estado')
+            self.assertFalse((Path(tmp) / 'RoboNFSe').exists())              # só cria quando precisa migrar
+
+
 if __name__ == '__main__':
     unittest.main()
