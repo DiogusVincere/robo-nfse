@@ -48,9 +48,14 @@ jobs:
           from openpyxl import load_workbook
           for arq in sorted(Path('/tmp/demo/_relatorios').glob('*.xlsx')):
               wb = load_workbook(arq, read_only=True)
-              assert wb.sheetnames == ['Empresas', 'Notas'], wb.sheetnames
+              assert wb.sheetnames == ['Empresas', 'Notas', 'Retenções'], wb.sheetnames
               linhas = list(wb['Empresas'].iter_rows(values_only=True))
               assert len(linhas) > 1, f'{arq.name} sem empresas'
-              print(f'{arq.name}: {len(linhas) - 1} empresa(s), {wb["Notas"].max_row - 1} nota(s)')
+              retencoes = list(wb['Retenções'].iter_rows(values_only=True))
+              assert len(retencoes) > 1, f'{arq.name} sem retenções'
+              papeis = {l[2] for l in retencoes[1:]}
+              assert papeis == {'tomada', 'prestada'}, papeis
+              print(f'{arq.name}: {len(linhas) - 1} empresa(s), {wb["Notas"].max_row - 1} nota(s), '
+                    f'{len(retencoes) - 1} linha(s) de retenções')
               wb.close()
           EOF
