@@ -4,15 +4,15 @@ r"""Receita do PyInstaller para o pacote portátil da interface local.
 Rode por build\empacotar.py, que chama
     python -m PyInstaller --noconfirm --clean --distpath <dist> --workpath <trabalho> build\robo.spec
 
-Sai "Robo NFSe Tomados.exe" (sem console) + _internal\ com o Python, o motor (robo_nfse_tomados.py), a interface
+Sai "Robo NFSe.exe" (sem console) + _internal\ com o Python, o motor (robo_nfse.py), a interface
 (interface\servidor.py + interface\web) e as bibliotecas: lxml, cryptography, requests, openpyxl e reportlab.
 """
 import os
 from pathlib import Path
 
 RAIZ = Path(SPECPATH).parent  # SPECPATH é a pasta deste arquivo (build\)
-NOME = 'Robo NFSe Tomados'
-VERSAO = os.environ.get('ROBO_VERSAO', '1.1.0')
+NOME = 'Robo NFSe'
+VERSAO = os.environ.get('ROBO_VERSAO', '2.0.0')
 
 
 def gerar_icone(destino: Path):
@@ -42,8 +42,8 @@ def info_de_versao():
         ffi=FixedFileInfo(filevers=partes, prodvers=partes, mask=0x3F, flags=0x0, OS=0x40004,
                           fileType=0x1, subtype=0x0, date=(0, 0)),
         kids=[StringFileInfo([StringTable('041604B0', [
-            StringStruct('FileDescription', 'Robô NFS-e Tomados - interface local'),
-            StringStruct('ProductName', 'Robô NFS-e Tomados'),
+            StringStruct('FileDescription', 'Robô NFS-e - interface local'),
+            StringStruct('ProductName', 'Robô NFS-e'),
             StringStruct('FileVersion', VERSAO),
             StringStruct('ProductVersion', VERSAO),
             StringStruct('OriginalFilename', NOME + '.exe'),
@@ -56,7 +56,7 @@ a = Analysis(
     pathex=[str(RAIZ)],
     binaries=[],
     datas=[(str(RAIZ / 'interface' / 'web'), 'interface/web')],
-    hiddenimports=['interface', 'interface.servidor', 'robo_nfse_tomados',
+    hiddenimports=['interface', 'interface.servidor', 'robo_nfse',
                    'reportlab.pdfgen.canvas', 'reportlab.lib.pagesizes', 'openpyxl', 'openpyxl.styles',
                    'lxml.etree', 'lxml._elementpath', 'requests',
                    'cryptography.hazmat.primitives.serialization.pkcs12', 'cryptography.hazmat.backends.openssl'],

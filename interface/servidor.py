@@ -2,9 +2,10 @@
 """Interface local do robô: página no navegador + API JSON, tudo em 127.0.0.1, servido por este processo.
 
 Fluxo: a pessoa escolhe o .pfx e digita a senha (a página manda os dois para ESTE processo, em localhost),
-escolhe o município da empresa e a competência e clica em "Buscar". O servidor roda o mesmo `executar()` do robô
-(etapas 1 a 3: extração nas duas fontes, organização das pastas, classificação e relatório) numa thread,
-mostra o andamento ao vivo e, no fim, devolve um .zip com a árvore de pastas, os XML, os PDFs e o Excel.
+escolhe o município da empresa, a competência e o que buscar (notas tomadas, prestadas ou as duas) e clica em
+"Buscar". O servidor roda o mesmo `executar()` do robô (etapas 1 a 3: extração nas duas fontes, organização das
+pastas, classificação, retenções e relatório) numa thread, mostra o andamento ao vivo e, no fim, devolve um .zip
+com a árvore de pastas, os XML, os PDFs e o Excel.
 
 Segurança do que é sensível:
   • só escuta em 127.0.0.1; a API exige um token aleatório gerado por execução e embutido na página
@@ -14,7 +15,7 @@ Segurança do que é sensível:
   • nada do certificado entra em log.
 
 O que fica no disco de quem usa, de propósito: o estado do robô (último NSU por CNPJ e o arquivo de outras
-competências) em %LOCALAPPDATA%\\RoboNFSeTomados\\estado, para a próxima busca do mesmo CNPJ ser incremental.
+competências) em %LOCALAPPDATA%\\RoboNFSe\\estado, para a próxima busca do mesmo CNPJ ser incremental.
 """
 from __future__ import annotations
 
@@ -41,11 +42,11 @@ RAIZ = Path(os.path.abspath(__file__)).parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-import robo_nfse_tomados as robo  # noqa: E402
+import robo_nfse as robo  # noqa: E402
 
-log = logging.getLogger('nfse_tomados.interface')
+log = logging.getLogger('nfse.interface')
 
-VERSAO = '1.1.0'
+VERSAO = '2.0.0'
 PORTA_PADRAO = 8747
 PASTA_WEB = Path(os.path.abspath(__file__)).parent / 'web'
 TIPOS = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -57,7 +58,11 @@ OCIOSO_SEGUNDOS = 15 * 60                            # sem página aberta por 15
 def pasta_de_estado() -> Path:
     """Onde o robô guarda o último NSU por CNPJ entre execuções (fora da pasta temporária da busca)."""
     base = os.environ.get('LOCALAPPDATA') or os.environ.get('XDG_DATA_HOME') or str(Path.home() / '.local' / 'share')
-    return Path(base) / 'RoboNFSeTomados' / 'estado'
+    nova, antiga = Path(base) / 'RoboNFSe', Path(base) / 'RoboNFSeTomados'
+    if antiga.is_dir() and not nova.exists():             # versão 1.x: mesma estrutura, só o nome mudou
+        with contextlib.suppress(OSError):
+            antiga.rename(nova)
+    return nova / 'estado'
 
 
 def fontes_reais() -> dict:
@@ -157,14 +162,21 @@ class Trabalho:
 
 # ---- montagem do resultado --------------------------------------------------------------------------------------
 def _nota_json(n: robo.Nota, situacao: str, empresa: robo.Empresa) -> dict:
+    r = n.retencoes
     return {
         'empresa_codigo': empresa.codigo, 'empresa_razao': empresa.razao,
-        'fonte': n.fonte, 'numero': n.numero, 'chave': n.chave,
+        'papel': n.papel, 'fonte': n.fonte, 'numero': n.numero, 'chave': n.chave,
         'emissao': n.emissao.isoformat() if n.emissao else None,
         'prestador_nome': n.prestador_nome, 'prestador_cnpj': n.prestador_cnpj,
         'prestador_municipio_ibge': n.prestador_municipio_ibge,
+        'tomador_nome': n.tomador_nome, 'tomador_cnpj': n.tomador_cnpj,
+        'tomador_municipio_ibge': n.tomador_municipio_ibge, 'contraparte': n.contraparte,
         'valor': round(n.valor_servico, 2), 'aliquota': n.aliquota, 'iss': round(n.valor_iss, 2),
-        'iss_retido': n.iss_retido, 'cancelada': n.cancelada, 'situacao': situacao,
+        'iss_retido': n.iss_retido, 'iss_retido_por': r.iss_por,
+        'retencoes': {'iss': r.iss, 'inss': r.inss, 'irrf': r.irrf, 'pis': r.pis, 'cofins': r.cofins,
+                      'csll': r.csll, 'csrf': r.csrf, 'csrf_quais': r.csrf_quais},
+        'retencoes_lista': r.quais(), 'retido_total': r.total, 'conferir': r.divergencia(),
+        'valor_liquido': n.valor_liquido, 'cancelada': n.cancelada, 'situacao': situacao,
     }
 
 
@@ -173,26 +185,39 @@ def resumo(resultados: list, comp: robo.Competencia) -> dict:
     notas = [(n, s) for r in resultados for n, s in r.notas]
     por_nota = [r.empresa for r in resultados for _ in r.notas]
     ativas = [n for n, _ in notas if not n.cancelada]
+    tomadas = [(n, s) for n, s in notas if n.papel != 'prestada']
+    prestadas = [(n, s) for n, s in notas if n.papel == 'prestada']
+    retido = lambda papel: round(sum(n.retencoes.total for n in ativas if n.papel == papel), 2)   # noqa: E731
     return {
         'competencia': str(comp),
         'pasta_competencia': comp.pasta,
         'empresas': [{
             'codigo': r.empresa.codigo, 'razao': r.empresa.razao, 'cnpj': r.empresa.cnpj,
             'municipio_ibge': r.empresa.municipio_ibge, 'documentos_lidos': r.extraidas,
+            'tomadas': r.tomadas, 'prestadas': r.prestadas,
             'fora_do_municipio': r.fora_do_municipio, 'escrituradas': r.escrituradas,
-            'ja_escrituradas': r.ja_escrituradas, 'pendencias': list(r.erros),
+            'ja_escrituradas': r.ja_escrituradas, 'retido_tomadas': r.retido('tomada'),
+            'retido_prestadas': r.retido('prestada'), 'pendencias': list(r.erros),
         } for r in resultados],
         'totais': {
             'documentos_lidos': sum(r.extraidas for r in resultados),
             'notas': len(notas),
+            'tomadas': len(tomadas),
+            'prestadas': len(prestadas),
             'sp': sum(1 for n, _ in notas if n.fonte == 'SP'),
             'nacional': sum(1 for n, _ in notas if n.fonte == 'Nacional'),
-            'do_municipio': sum(1 for _, s in notas if s.startswith('do município')),
-            'fora': sum(1 for n, s in notas if not n.cancelada and not s.startswith('do município')),
+            'do_municipio': sum(1 for _, s in tomadas if s.startswith('do município')),
+            'fora': sum(1 for n, s in tomadas if not n.cancelada and not s.startswith('do município')),
             'canceladas': sum(1 for n, _ in notas if n.cancelada),
             'valor': round(sum(n.valor_servico for n in ativas), 2),
+            'valor_tomadas': round(sum(n.valor_servico for n in ativas if n.papel != 'prestada'), 2),
+            'valor_prestadas': round(sum(n.valor_servico for n in ativas if n.papel == 'prestada'), 2),
             'iss': round(sum(n.valor_iss for n in ativas), 2),
             'iss_retido': round(sum(n.valor_iss for n in ativas if n.iss_retido), 2),
+            'retido_tomadas': retido('tomada'),
+            'retido_prestadas': retido('prestada'),
+            'com_retencao': sum(1 for n in ativas if n.retencoes.tem),
+            'conferir': sum(1 for n in ativas if n.retencoes.divergencia()),
             'pendencias': sum(len(r.erros) for r in resultados),
         },
         'notas': [_nota_json(n, s, e) for (n, s), e in zip(notas, por_nota)],
@@ -216,13 +241,14 @@ def zipar_competencia(pasta_comp: Path, relatorios: list, razao: str, comp: robo
                 zf.write(arquivo, f'{raiz}/NFE/{comp.ano}/{pasta_comp.name}/{arquivo.relative_to(pasta_comp).as_posix()}')
         for relatorio in relatorios:
             if Path(relatorio).is_file():
-                zf.write(relatorio, f'{raiz}/Relatorio NFS-e tomadas {comp.pasta}.xlsx')
+                zf.write(relatorio, f'{raiz}/Relatorio NFS-e {comp.pasta}.xlsx')
     return destino
 
 
 # ---- as duas buscas ---------------------------------------------------------------------------------------------
 def rodar_real(trabalho: Trabalho, pfx: bytes, senha: str, comp: robo.Competencia, municipio_ibge: str,
-               razao: str, desde_o_inicio: bool, fontes: Callable[[], dict], estado_em: Path):
+               razao: str, desde_o_inicio: bool, fontes: Callable[[], dict], estado_em: Path,
+               papeis: tuple = robo.PAPEIS):
     pasta_cert = trabalho.pasta / 'certificado'
     pasta_cert.mkdir()
     caminho_pfx = pasta_cert / 'certificado.pfx'
@@ -240,7 +266,8 @@ def rodar_real(trabalho: Trabalho, pfx: bytes, senha: str, comp: robo.Competenci
         empresa = robo.Empresa('1', (razao or cert.titular).strip() or cert.titular, cert.cnpj, municipio_ibge,
                                cert.cnpj, pasta=base_saida / cert.cnpj)
         trabalho.anotar(f'Certificado de {cert.titular}, CNPJ {formatar_cnpj(cert.cnpj)}, válido até {cert.validade:%d/%m/%Y}.')
-        trabalho.anotar(f'Competência {comp}. Município da empresa: {municipio_ibge}.')
+        o_que = ' e '.join({'tomada': 'notas tomadas', 'prestada': 'notas prestadas'}[p] for p in papeis)
+        trabalho.anotar(f'Competência {comp}. Município da empresa: {municipio_ibge}. Buscando {o_que}.')
 
         estado_em.mkdir(parents=True, exist_ok=True)
         if desde_o_inicio:
@@ -250,7 +277,7 @@ def rodar_real(trabalho: Trabalho, pfx: bytes, senha: str, comp: robo.Competenci
                 trabalho.anotar('Último NSU descartado: a busca no Sistema Nacional recomeça do zero.', 'aviso')
 
         cfg = robo.Config(pasta_saida=base_saida, pasta_estado=estado_em,
-                          municipio_escrituracao_ibge=municipio_ibge, pausa_entre_empresas=0)
+                          municipio_escrituracao_ibge=municipio_ibge, pausa_entre_empresas=0, papeis=tuple(papeis))
         trabalho.fase = 'buscando'
         trabalho.anotar('Consultando a Nota Paulistana e o Sistema Nacional NFS-e…')
         resultados: list = []
@@ -263,11 +290,12 @@ def rodar_real(trabalho: Trabalho, pfx: bytes, senha: str, comp: robo.Competenci
         trabalho.resultado['modo'] = 'real'
         trabalho.resultado['estado_em'] = str(estado_em)
         trabalho.resultado['pasta_local'] = str(pasta_comp)
-        nome = f'NFS-e tomadas {cert.cnpj} {comp.pasta}.zip'
+        nome = f'NFS-e {cert.cnpj} {comp.pasta}.zip'
         trabalho.zip_caminho = zipar_competencia(pasta_comp, relatorios, empresa.razao, comp, trabalho.pasta / nome)
         t = trabalho.resultado['totais']
-        trabalho.anotar(f"Pronto: {t['notas']} nota(s) distinta(s) ({t['documentos_lidos']} documento(s) lido(s)), "
-                        f"{t['fora']} de fora do município, {t['canceladas']} cancelada(s). Zip gerado.")
+        trabalho.anotar(f"Pronto: {t['notas']} nota(s) distinta(s) ({t['documentos_lidos']} documento(s) lido(s)): "
+                        f"{t['tomadas']} tomada(s), {t['fora']} de fora do município; {t['prestadas']} prestada(s), "
+                        f"R$ {t['retido_prestadas']:.2f} retido(s) pelos clientes; {t['canceladas']} cancelada(s). Zip gerado.")
         trabalho.terminar()
     except Exception as e:  # noqa: BLE001 — qualquer falha vira mensagem na página
         trabalho.anotar(f'{type(e).__name__}: {e}', 'erro')
@@ -288,11 +316,12 @@ def rodar_simulado(trabalho: Trabalho):
         trabalho.fase = 'empacotando'
         trabalho.resultado = resumo(resultados, comp)
         trabalho.resultado['modo'] = 'simulado'
-        nome = f'demonstracao-nfse-tomados-{comp.pasta}.zip'
+        nome = f'demonstracao-nfse-{comp.pasta}.zip'
         trabalho.zip_caminho = zipar(trabalho.pasta / 'saida', trabalho.pasta / nome)
         t = trabalho.resultado['totais']
-        trabalho.anotar(f"Pronto: {t['notas']} nota(s) em {len(resultados)} empresa(s), "
-                        f"{sum(e['escrituradas'] for e in trabalho.resultado['empresas'])} escriturada(s) no portal simulado. Zip gerado.")
+        trabalho.anotar(f"Pronto: {t['notas']} nota(s) em {len(resultados)} empresa(s) — {t['tomadas']} tomada(s), "
+                        f"{t['prestadas']} prestada(s), {sum(e['escrituradas'] for e in trabalho.resultado['empresas'])} "
+                        f"escriturada(s) no portal simulado. Zip gerado.")
         trabalho.terminar()
     except Exception as e:  # noqa: BLE001
         trabalho.anotar(f'{type(e).__name__}: {e}', 'erro')
@@ -421,7 +450,7 @@ class Tratador(BaseHTTPRequestHandler):
             t = self.server.trabalho
             if not (t and t.concluido and t.zip_caminho and t.zip_caminho.is_file()):
                 return self._json(404, {'erro': 'não há zip pronto'})
-            nome = t.zip_caminho.name.encode('ascii', 'ignore').decode() or 'nfse-tomadas.zip'
+            nome = t.zip_caminho.name.encode('ascii', 'ignore').decode() or 'nfse.zip'
             return self._responder(200, t.zip_caminho.read_bytes(), 'application/zip',
                                    {'Content-Disposition': f'attachment; filename="{nome}"'})
         return self._json(404, {'erro': 'rota não encontrada'})
@@ -484,7 +513,7 @@ class Tratador(BaseHTTPRequestHandler):
                                     'validade': cert.validade.date().isoformat(), 'vencido': vencido})
         except ValueError as e:
             if 'CNPJ' in str(e):
-                return self._json(400, {'erro': 'o certificado não tem CNPJ: a busca precisa do e-CNPJ da empresa tomadora'})
+                return self._json(400, {'erro': 'o certificado não tem CNPJ: a busca precisa do e-CNPJ da empresa'})
             return self._json(400, {'erro': 'não foi possível abrir o certificado: confira o arquivo e a senha'})
         except Exception:  # noqa: BLE001 — senha errada vira ValueError na cryptography, mas por garantia
             return self._json(400, {'erro': 'não foi possível abrir o certificado: confira o arquivo e a senha'})
@@ -500,12 +529,18 @@ class Tratador(BaseHTTPRequestHandler):
                 raise ValueError('escolha o município da empresa (código IBGE de 7 dígitos)')
             if comp > robo.Competencia(dt.date.today().year, dt.date.today().month):
                 raise ValueError('competência no futuro')
+            papeis = dados.get('papeis')
+            if papeis is None:
+                papeis = list(robo.PAPEIS)
+            if not isinstance(papeis, list) or not papeis or any(p not in robo.PAPEIS for p in papeis):
+                raise ValueError('escolha o que buscar: notas tomadas, prestadas ou as duas')
+            papeis = tuple(p for p in robo.PAPEIS if p in papeis)
         except ValueError as e:
             return self._json(400, {'erro': str(e)})
         try:
             t = self.server.iniciar_trabalho('real', rodar_real, pfx, senha, comp, municipio,
                                              str(dados.get('razao') or ''), bool(dados.get('desde_o_inicio')),
-                                             self.server.fontes, self.server.estado_em)
+                                             self.server.fontes, self.server.estado_em, papeis)
         except RuntimeError as e:
             return self._json(409, {'erro': str(e)})
         return self._json(202, {'id': t.id})
@@ -539,7 +574,7 @@ def iniciar(porta: int = PORTA_PADRAO, abrir_navegador: bool = True, encerrar_oc
     servidor = criar_servidor(porta, encerrar_ocioso=encerrar_ocioso, **kw)
     if encerrar_ocioso:
         threading.Thread(target=servidor.vigiar_ociosidade, daemon=True, name='vigia-ociosidade').start()
-    log.info('Interface local do Robô NFS-e Tomados em %s (Ctrl+C encerra)', servidor.url)
+    log.info('Interface local do Robô NFS-e em %s (Ctrl+C encerra)', servidor.url)
     print(f'\n  Interface local: {servidor.url}\n  O certificado e a senha ficam só nesta máquina.\n', flush=True)
     if abrir_navegador:
         threading.Timer(0.6, lambda: webbrowser.open(servidor.url)).start()

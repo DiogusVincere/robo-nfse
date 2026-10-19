@@ -14,7 +14,7 @@ RAIZ = Path(os.path.abspath(__file__)).parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-import robo_nfse_tomados as robo  # noqa: E402
+import robo_nfse as robo  # noqa: E402
 
 # sem isto o Python imprime os WARNING do robô (sessão caiu etc.) no meio da saída dos testes
 robo.log.addHandler(logging.NullHandler())
@@ -35,12 +35,17 @@ def empresa(codigo='100', municipio=MUNICIPIO, cnpj=CNPJ_A, responsavel='Analist
 
 def nota(numero='4521', fonte='Nacional', valor=1000.0, aliquota=2.0, municipio=OUTRO_MUNICIPIO,
          prestador=CNPJ_PRESTADOR, tomador=CNPJ_A, retido=False, cancelada=False, comp=COMP, dia=10,
-         chave=None, nome='Prestador Exemplo 1') -> robo.Nota:
+         chave=None, nome='Prestador Exemplo 1', papel='tomada', tomador_nome='', retencoes=None) -> robo.Nota:
+    """Uma nota TOMADA pela empresa A (padrão) ou, com papel='prestada', uma nota que a empresa A prestou."""
+    if papel == 'prestada':
+        prestador, nome, tomador = CNPJ_A, 'Empresa Exemplo 100 Ltda', CNPJ_B
+        tomador_nome = tomador_nome or ''
     return robo.Nota(fonte=fonte, numero=numero, chave=chave or f'CHAVE-{fonte}-{numero}',
                      emissao=dt.date(comp.ano, comp.mes, dia), competencia=comp,
                      prestador_cnpj=prestador, prestador_nome=nome, prestador_municipio_ibge=municipio,
-                     tomador_cnpj=tomador, valor_servico=valor, aliquota=aliquota,
+                     tomador_cnpj=tomador, tomador_nome=tomador_nome, valor_servico=valor, aliquota=aliquota,
                      valor_iss=round(valor * aliquota / 100, 2), iss_retido=retido, cancelada=cancelada,
+                     papel=papel, retencoes=retencoes if retencoes is not None else robo.Retencoes(),
                      xml=f'<NFSe><nNFSe>{numero}</nNFSe><teste>sintética</teste></NFSe>')
 
 
@@ -68,18 +73,29 @@ class SemQueda:
         return 1.0
 
 
+def ler_aba(wb, nome):
+    linhas = list(wb[nome].iter_rows(values_only=True))
+    cab = list(linhas[0])
+    return [dict(zip(cab, linha)) for linha in linhas[1:]]
+
+
 def ler_relatorio(caminho: Path):
     """Lê o Excel do robô: {código: linha da aba Empresas} e a lista de linhas da aba Notas (sem cabeçalho)."""
     from openpyxl import load_workbook
     wb = load_workbook(caminho, read_only=True)
-    cab_emp = [c for c in next(wb['Empresas'].iter_rows(values_only=True))]
-    empresas = {}
-    for linha in list(wb['Empresas'].iter_rows(values_only=True))[1:]:
-        empresas[str(linha[0])] = dict(zip(cab_emp, linha))
-    cab_notas = [c for c in next(wb['Notas'].iter_rows(values_only=True))]
-    notas = [dict(zip(cab_notas, linha)) for linha in list(wb['Notas'].iter_rows(values_only=True))[1:]]
+    empresas = {str(linha['Código']): linha for linha in ler_aba(wb, 'Empresas')}
+    notas = ler_aba(wb, 'Notas')
     wb.close()
     return empresas, notas
+
+
+def ler_retencoes(caminho: Path):
+    """A aba Retenções: uma linha por empresa × papel, com a soma de cada tributo."""
+    from openpyxl import load_workbook
+    wb = load_workbook(caminho, read_only=True)
+    linhas = ler_aba(wb, 'Retenções')
+    wb.close()
+    return linhas
 
 
 def ler_relatorios(pasta: Path):
@@ -93,4 +109,5 @@ def ler_relatorios(pasta: Path):
 
 
 __all__ = ['robo', 'dataclasses', 'dt', 'MUNICIPIO', 'OUTRO_MUNICIPIO', 'COMP', 'CNPJ_A', 'CNPJ_B', 'CNPJ_PRESTADOR',
-           'empresa', 'nota', 'notas_fora', 'cnpj_valido', 'SemQueda', 'ler_relatorio', 'ler_relatorios', 'RAIZ']
+           'empresa', 'nota', 'notas_fora', 'cnpj_valido', 'SemQueda', 'ler_relatorio', 'ler_retencoes',
+           'ler_relatorios', 'RAIZ']

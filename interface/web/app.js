@@ -1,4 +1,4 @@
-/* Interface local do Robô NFS-e Tomados. Vanilla JS, sem build. Fala só com o processo local (127.0.0.1). */
+/* Interface local do Robô NFS-e (tomadas e prestadas). Vanilla JS, sem build. Fala só com o processo local (127.0.0.1). */
 (function () {
   'use strict';
 
@@ -185,6 +185,13 @@
     $('competencia').max = new Date().toISOString().slice(0, 7);
   })();
 
+  function papeisEscolhidos() {
+    const p = [];
+    if ($('papel-tomada').checked) p.push('tomada');
+    if ($('papel-prestada').checked) p.push('prestada');
+    return p;
+  }
+
   // ---- busca e andamento -----------------------------------------------------------------------------
   let ocupado = false;
   let totalMensagens = 0;
@@ -261,6 +268,7 @@
     if (!$('senha').value) { toast('Digite a senha do certificado.', 'erro'); $('senha').focus(); return; }
     if (!$('municipio-ibge').value) { toast('Escolha o município da empresa na lista.', 'erro'); campoMun.focus(); return; }
     if (!$('competencia').value) { toast('Informe a competência.', 'erro'); return; }
+    if (!papeisEscolhidos().length) { toast('Marque o que buscar: notas tomadas, prestadas ou as duas.', 'erro'); return; }
     if (!certificado) {
       const info = await conferirCertificado();
       if (!info) return;
@@ -277,6 +285,7 @@
           municipio_ibge: $('municipio-ibge').value,
           razao: certificado.titular,
           desde_o_inicio: $('desde-inicio').checked,
+          papeis: papeisEscolhidos(),
         },
       });
       acompanhar();
@@ -300,41 +309,72 @@
   let filtroAtual = 'todas';
   let zipNome = '';
 
+  const ehTomada = (n) => n.papel !== 'prestada';
   const CHIPS = [
     ['todas', 'Todas', () => true],
-    ['fora', 'De fora do município', (n) => !n.cancelada && !n.situacao.startsWith('do município')],
-    ['municipio', 'Do município', (n) => n.situacao.startsWith('do município')],
+    ['tomadas', 'Tomadas', ehTomada],
+    ['prestadas', 'Prestadas', (n) => !ehTomada(n)],
+    ['fora', 'De fora do município', (n) => ehTomada(n) && !n.cancelada && !n.situacao.startsWith('do município')],
+    ['municipio', 'Do município', (n) => ehTomada(n) && n.situacao.startsWith('do município')],
+    ['retencao', 'Com retenção', (n) => !n.cancelada && n.retido_total > 0],
+    ['conferir', 'Conferir', (n) => !n.cancelada && !!n.conferir],
     ['canceladas', 'Canceladas', (n) => n.cancelada],
-    ['retido', 'ISS retido', (n) => n.iss_retido && !n.cancelada],
   ];
 
   function classeSituacao(n) {
     if (n.cancelada) return 'selo--cinza';
+    if (!ehTomada(n)) return 'selo--verde';
     if (n.situacao.startsWith('do município')) return 'selo--verde';
     if (n.situacao.startsWith('NÃO')) return 'selo--vermelho';
     if (n.situacao.startsWith('escriturada') || n.situacao.startsWith('já')) return 'selo--azul';
     return 'selo--ambar';
   }
 
+  function celulaRetencoes(n) {
+    const r = n.retencoes || {};
+    const partes = [];
+    if (r.iss > 0) partes.push(['ISS', r.iss, n.iss_retido_por ? 'retido pelo ' + n.iss_retido_por : 'ISS retido']);
+    if (r.inss > 0) partes.push(['INSS', r.inss, 'contribuição previdenciária retida']);
+    if (r.irrf > 0) partes.push(['IRRF', r.irrf, 'imposto de renda retido']);
+    if (r.pis > 0) partes.push(['PIS', r.pis, 'PIS retido']);
+    if (r.cofins > 0) partes.push(['COFINS', r.cofins, 'COFINS retida']);
+    if (r.csll > 0) partes.push(['CSLL', r.csll, 'CSLL retida']);
+    if (r.csrf > 0) partes.push(['CSRF', r.csrf, 'soma das retenções de ' + (r.csrf_quais || 'PIS/COFINS/CSLL').replace(/\+/g, ', ')]);
+    if (!partes.length) return '<span class="texto-suave">—</span>';
+    let html = '<div class="rets">' + partes.map((p) =>
+      '<span class="ret" title="' + escapar(p[2]) + '">' + escapar(p[0]) + ' ' + moedaBR.format(p[1]) + '</span>').join('') + '</div>';
+    html += '<small class="ret-tot">total ' + moedaBR.format(n.retido_total || 0) + '</small>' +
+      '<small class="ret-tot">líquido ' + moedaBR.format(n.valor_liquido || 0) + '</small>';
+    if (n.conferir) html += '<div><span class="ret ret--conferir" title="' + escapar(n.conferir) + '">conferir</span></div>';
+    return html;
+  }
+
   function renderTabela() {
     const q = normalizar($('filtro').value.trim());
     const regra = CHIPS.find((c) => c[0] === filtroAtual)[2];
-    const visiveis = notas.filter((n) => regra(n) && (!q || normalizar(n.prestador_nome + ' ' + n.numero + ' ' + n.prestador_cnpj + ' ' + n.empresa).includes(q)));
+    const visiveis = notas.filter((n) => regra(n) && (!q || normalizar(n.prestador_nome + ' ' + n.tomador_nome + ' ' + n.numero + ' ' + n.prestador_cnpj + ' ' + n.tomador_cnpj + ' ' + n.empresa).includes(q)));
     const corpo = $('tabela').querySelector('tbody');
     if (!visiveis.length) {
       corpo.innerHTML = '<tr><td colspan="8" class="texto-centro texto-suave">Nenhuma nota com esse filtro.</td></tr>';
     } else {
-      corpo.innerHTML = visiveis.map((n) =>
-        '<tr' + (n.cancelada ? ' class="cancelada"' : '') + '>' +
-        '<td><span class="fonte fonte--' + (n.fonte === 'SP' ? 'sp' : 'nac') + '">' + escapar(n.fonte) + '</span></td>' +
-        '<td class="mono">' + escapar(n.numero) + '</td>' +
-        '<td>' + escapar(dataBR(n.emissao)) + '</td>' +
-        '<td><div class="prest"><strong>' + escapar(n.prestador_nome || '—') + '</strong><small>' + escapar(cnpjFmt(n.prestador_cnpj)) + (n.empresa ? ' · tomador: ' + escapar(n.empresa) : '') + '</small></div></td>' +
-        '<td>' + escapar(nomeMunicipio(n.prestador_municipio_ibge)) + '</td>' +
-        '<td class="num">' + moedaBR.format(n.valor) + '</td>' +
-        '<td class="num">' + moedaBR.format(n.iss) + (n.iss_retido ? ' <span class="retido" title="ISS retido pelo tomador">retido</span>' : '') + '</td>' +
-        '<td><span class="selo ' + classeSituacao(n) + '">' + escapar(n.situacao) + '</span></td>' +
-        '</tr>').join('');
+      corpo.innerHTML = visiveis.map((n) => {
+        const tomada = ehTomada(n);
+        const quem = tomada ? n.prestador_nome : n.tomador_nome;
+        const cnpj = tomada ? n.prestador_cnpj : n.tomador_cnpj;
+        const municipio = tomada ? n.prestador_municipio_ibge : n.tomador_municipio_ibge;
+        return '<tr' + (n.cancelada ? ' class="cancelada"' : '') + '>' +
+          '<td><div class="papel-fonte"><span class="papel papel--' + (tomada ? 'tomada' : 'prestada') + '">' + (tomada ? 'tomada' : 'prestada') + '</span>' +
+          '<span class="fonte fonte--' + (n.fonte === 'SP' ? 'sp' : 'nac') + '">' + escapar(n.fonte) + '</span></div></td>' +
+          '<td class="mono">' + escapar(n.numero) + '</td>' +
+          '<td>' + escapar(dataBR(n.emissao)) + '</td>' +
+          '<td><div class="prest"><strong>' + escapar(quem || '—') + '</strong><small>' + (tomada ? 'prestador' : 'tomador') + ' · ' + escapar(cnpjFmt(cnpj)) + '</small>' +
+          '<small>' + escapar(nomeMunicipio(municipio)) + (n.empresa ? ' · empresa: ' + escapar(n.empresa) : '') + '</small></div></td>' +
+          '<td class="num">' + moedaBR.format(n.valor) + '</td>' +
+          '<td class="num">' + moedaBR.format(n.iss) + (n.iss_retido ? ' <span class="retido" title="ISS retido pelo ' + escapar(n.iss_retido_por || 'tomador') + '">retido</span>' : '') + '</td>' +
+          '<td>' + celulaRetencoes(n) + '</td>' +
+          '<td><span class="selo ' + classeSituacao(n) + '">' + escapar(n.situacao) + '</span></td>' +
+          '</tr>';
+      }).join('');
     }
     $('res-rodape').textContent = visiveis.length + ' de ' + notas.length + ' nota(s) na tela.';
   }
@@ -342,6 +382,7 @@
   function renderChips() {
     $('chips').innerHTML = CHIPS.map((c) => {
       const qtd = notas.filter(c[2]).length;
+      if (c[0] === 'conferir' && !qtd) return '';
       return '<button type="button" class="chip' + (filtroAtual === c[0] ? ' chip--ativo' : '') + '" data-f="' + c[0] + '">' + c[1] + ' <small>' + qtd + '</small></button>';
     }).join('');
   }
@@ -357,7 +398,7 @@
   async function mostrarResultado(res, zip) {
     await carregarMunicipios();
     const varias = res.empresas.length > 1;
-    // com várias empresas (modo simulado), a linha mostra também quem é o tomador
+    // com várias empresas (modo simulado), a linha mostra também de que empresa é a nota
     notas = res.notas.map((n) => Object.assign({}, n, { empresa: varias ? (n.empresa_razao || '') : '' }));
     zipNome = zip || '';
     const t = res.totais;
@@ -366,11 +407,11 @@
     $('res-modo').className = 'selo ' + (res.modo === 'simulado' ? 'selo--ambar' : 'selo--verde');
     const cartoes = [
       ['Notas distintas', t.notas, t.documentos_lidos + ' documento(s) lido(s)'],
-      ['De fora do município', t.fora, 'precisam ser escrituradas'],
-      ['Do município', t.do_municipio, 'não se declaram'],
-      ['Canceladas', t.canceladas, ''],
-      ['Valor dos serviços', moedaBR.format(t.valor), 'notas ativas'],
-      ['ISS retido', moedaBR.format(t.iss_retido), 'de ' + moedaBR.format(t.iss) + ' de ISS'],
+      ['Tomadas', t.tomadas, t.fora + ' de fora do município · ' + t.do_municipio + ' do município'],
+      ['Prestadas', t.prestadas, moedaBR.format(t.valor_prestadas || 0) + ' em serviços'],
+      ['Retido nas tomadas', moedaBR.format(t.retido_tomadas || 0), 'a empresa recolhe · ISS ' + moedaBR.format(t.iss_retido || 0)],
+      ['Retido nas prestadas', moedaBR.format(t.retido_prestadas || 0), 'os clientes retiveram · a empresa abate'],
+      ['Canceladas', t.canceladas, (t.conferir ? t.conferir + ' nota(s) para conferir' : '')],
     ];
     $('totais').innerHTML = cartoes.map((c) => '<div class="total"><small>' + escapar(c[0]) + '</small><strong>' + escapar(c[1]) + '</strong><span>' + escapar(c[2]) + '</span></div>').join('');
     $('zip-nome').textContent = zipNome;
@@ -400,7 +441,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = zipNome || 'nfse-tomadas.zip';
+      a.download = zipNome || 'nfse.zip';
       document.body.appendChild(a);
       a.click();
       a.remove();

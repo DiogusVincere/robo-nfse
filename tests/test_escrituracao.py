@@ -159,7 +159,7 @@ class TestEscriturarEmpresa(Base):
 
     def test_sessao_perdida_e_renovada_e_a_nota_refeita(self):
         portal = PortalQueCaiUmaVez()
-        with self.assertLogs('nfse_tomados', 'WARNING') as logs:
+        with self.assertLogs('nfse', 'WARNING') as logs:
             res = self.escriturar(portal, suporte.notas_fora(3))
         self.assertEqual(portal.sessoes, 2)                                    # a inicial + a renovação
         self.assertEqual(res.escrituradas, 3)
@@ -168,7 +168,7 @@ class TestEscriturarEmpresa(Base):
 
     def test_sessao_que_nunca_volta_vira_pendencia(self):
         portal = PortalQueSempreCai()
-        with self.assertLogs('nfse_tomados', 'WARNING'):
+        with self.assertLogs('nfse', 'WARNING'):
             res = self.escriturar(portal, suporte.notas_fora(1))
         self.assertEqual(portal.sessoes, 4)                                    # 1 + 3 tentativas
         self.assertEqual(res.escrituradas, 0)
@@ -199,21 +199,37 @@ class TestExportacao(Base):
 
 class TestExecutar(Base):
     def test_sem_portal_lista_o_que_escriturar(self):
+        com_retencao = robo.Retencoes(inss=110.0, irrf=15.0, csrf=46.5, csrf_quais='PIS+COFINS+CSLL')
         notas = [nota('1', municipio=suporte.OUTRO_MUNICIPIO), nota('2', municipio=suporte.MUNICIPIO),
-                 nota('3', cancelada=True)]
+                 nota('3', cancelada=True),
+                 # prestadas: não se escrituram; o que importa é o que o cliente reteve
+                 nota('4', papel='prestada', tomador_nome='Cliente Exemplo 1', retencoes=com_retencao),
+                 nota('5', papel='prestada', tomador_nome='Cliente Exemplo 2', fonte='SP'),
+                 nota('5', papel='prestada', tomador_nome='Cliente Exemplo 2', fonte='Nacional'),   # a mesma pelas 2 fontes
+                 nota('6', papel='prestada', cancelada=True)]
         relatorios = robo.executar(self.cfg, COMP, [self.empresa], robo.SenhaDoAmbiente(), {}, None, {},
                                    extrator=lambda e: notas)
         self.assertEqual(len(relatorios), 1)
         self.assertEqual(relatorios[0].name, 'Analista 1 09-2026.xlsx')
         empresas, detalhe = suporte.ler_relatorio(relatorios[0])
-        self.assertEqual(empresas['100']['Extraídas'], 3)
+        self.assertEqual(empresas['100']['Extraídas'], 7)
+        self.assertEqual(empresas['100']['Tomadas'], 3)
+        self.assertEqual(empresas['100']['Prestadas'], 3)                       # a 5 deduplicada
         self.assertEqual(empresas['100']['Fora do município'], 1)
         self.assertEqual(empresas['100']['Escrituradas agora'], 0)
+        self.assertEqual(empresas['100']['Retido nas prestadas'], 171.5)
+        self.assertEqual(empresas['100']['Retido nas tomadas'], 0)
         sit = {d['Nº']: d['Situação'] for d in detalhe}
         self.assertEqual(sit, {'1': 'fora do município — escriturar no portal do tomador',
-                               '2': 'do município (não se declara)', '3': 'cancelada'})
-        pasta = self.raiz / '100 - Empresa Exemplo 100 Ltda' / 'NFE' / '2026' / '09-2026' / 'Tomados'
-        self.assertTrue((pasta / 'Tomados Portal Nacional' / 'Autorizadas' / 'Prestador Exemplo 1 NF 1.xml').exists())
+                               '2': 'do município (não se declara)', '3': 'cancelada',
+                               '4': 'prestada — com retenção', '5': 'prestada', '6': 'prestada cancelada'})
+        papeis = {d['Nº']: d['Papel'] for d in detalhe}
+        self.assertEqual(papeis, {'1': 'tomada', '2': 'tomada', '3': 'tomada', '4': 'prestada', '5': 'prestada', '6': 'prestada'})
+        self.assertEqual([d['Fonte'] for d in detalhe if d['Nº'] == '5'], ['Nacional'])   # a Nacional é a que fica
+        base = self.raiz / '100 - Empresa Exemplo 100 Ltda' / 'NFE' / '2026' / '09-2026'
+        self.assertTrue((base / 'Tomados' / 'Tomados Portal Nacional' / 'Autorizadas' / 'Prestador Exemplo 1 NF 1.xml').exists())
+        self.assertTrue((base / 'Prestados' / 'Prestados Portal Nacional' / 'Autorizadas' / 'Cliente Exemplo 1 NF 4.xml').exists())
+        self.assertTrue((base / 'Prestados' / 'Prestados SP' / 'Autorizadas' / 'Cliente Exemplo 2 NF 5.xml').exists())
 
     def test_falha_isolada_e_um_relatorio_por_responsavel(self):
         e1, e2 = suporte.empresa('100', responsavel='Analista 1'), suporte.empresa('101', cnpj=suporte.CNPJ_B,
@@ -224,7 +240,7 @@ class TestExecutar(Base):
                 raise RuntimeError('sem certificado A1 válido')
             return suporte.notas_fora(2)
 
-        with self.assertLogs('nfse_tomados', 'INFO'):
+        with self.assertLogs('nfse', 'INFO'):
             relatorios = robo.executar(self.cfg, COMP, [e1, e2], robo.SenhaDoAmbiente(), {}, portal_sem_queda(),
                                        {}, extrator=extrator)
         self.assertEqual(sorted(r.name for r in relatorios), ['Analista 1 09-2026.xlsx', 'Analista 2 09-2026.xlsx'])

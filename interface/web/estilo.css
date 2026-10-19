@@ -1,4 +1,4 @@
-/* Interface local do Robô NFS-e Tomados */
+/* Interface local do Robô NFS-e */
 :root {
   --primaria: #1f4e5f;
   --primaria-2: #2a6a80;
@@ -225,3 +225,16 @@ button, input { font: inherit; color: inherit; }
   .totais { grid-template-columns: 1fr 1fr; }
   .cartao, .passo { padding: 14px; }
 }
+
+/* papel da nota (tomada × prestada) e as retenções lidas do XML */
+.papel { font-size: 0.72rem; font-weight: 700; padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+.papel--tomada { background: var(--azul-claro); color: var(--azul); }
+.papel--prestada { background: var(--verde-claro); color: var(--verde); }
+.rets { display: flex; flex-wrap: wrap; gap: 3px; }
+.ret { font-size: 0.7rem; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--acento-claro); color: var(--ambar); white-space: nowrap; }
+.ret--conferir { background: var(--vermelho-claro); color: var(--vermelho); }
+.papeis { display: flex; gap: 18px; flex-wrap: wrap; }
+.papeis label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.papel-fonte { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.ret-tot { display: block; color: var(--tinta-3); white-space: nowrap; }
+.tabela td:nth-child(7) { min-width: 150px; }

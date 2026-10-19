@@ -1,6 +1,6 @@
-r"""Entrada do executável "Robo NFSe Tomados.exe": sobe a interface local e abre o navegador.
+r"""Entrada do executável "Robo NFSe.exe": sobe a interface local e abre o navegador.
 
-Sem console: os avisos vão para %LOCALAPPDATA%\RoboNFSeTomados\interface.log. O processo se encerra sozinho
+Sem console: os avisos vão para %LOCALAPPDATA%\RoboNFSe\interface.log. O processo se encerra sozinho
 15 minutos depois de a página ser fechada (sem busca em andamento), ou na hora pelo botão "Encerrar" da página.
 """
 import logging
@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-TITULO = 'Robô NFS-e Tomados'
+TITULO = 'Robô NFS-e'
 
 
 def avisar(texto: str) -> None:
@@ -21,7 +21,7 @@ def avisar(texto: str) -> None:
 
 def main() -> int:
     sys.dont_write_bytecode = True
-    pasta = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'RoboNFSeTomados'
+    pasta = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'RoboNFSe'
     pasta.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=pasta / 'interface.log', level=logging.INFO, encoding='utf-8',
                         format='%(asctime)s %(levelname)s %(name)s: %(message)s')

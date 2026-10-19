@@ -111,11 +111,17 @@ class TestSalvarXmls(unittest.TestCase):
             pasta = Path(tmp)
             autorizada = nota('10', fonte='SP', nome='Prestador: Exemplo/1')
             cancelada = nota('11', fonte='Nacional', cancelada=True)
-            robo.salvar_xmls([autorizada, cancelada], pasta)
+            prestada = nota('12', fonte='Nacional', papel='prestada', tomador_nome='Cliente Exemplo/2')
+            sem_nome = nota('13', fonte='SP', papel='prestada', tomador_nome='')     # tomador sem nome: vai o CNPJ
+            robo.salvar_xmls([autorizada, cancelada, prestada, sem_nome], pasta)
             a = pasta / 'Tomados' / 'Tomados SP' / 'Autorizadas' / 'Prestador Exemplo 1 NF 10.xml'
             c = pasta / 'Tomados' / 'Tomados Portal Nacional' / 'Canceladas' / 'Prestador Exemplo 1 NF 11.xml'
+            p = pasta / 'Prestados' / 'Prestados Portal Nacional' / 'Autorizadas' / 'Cliente Exemplo 2 NF 12.xml'
+            s = pasta / 'Prestados' / 'Prestados SP' / 'Autorizadas' / f'{suporte.CNPJ_B} NF 13.xml'
             self.assertTrue(a.exists(), list(pasta.rglob('*')))
             self.assertTrue(c.exists())
+            self.assertTrue(p.exists(), list(pasta.rglob('*')))                 # prestada: pasta própria, nome do tomador
+            self.assertTrue(s.exists(), list(pasta.rglob('*')))
             self.assertEqual(a.read_text('utf-8'), autorizada.xml)
             tem_reportlab = importlib.util.find_spec('reportlab') is not None
             self.assertEqual(a.with_suffix('.pdf').exists(), tem_reportlab)    # espelho só com reportlab

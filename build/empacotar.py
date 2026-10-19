@@ -1,8 +1,8 @@
-r"""Monta o pacote portátil para Windows da interface local: a pasta "Robo NFSe Tomados" e o zip dela.
+r"""Monta o pacote portátil para Windows da interface local: a pasta "Robo NFSe" e o zip dela.
 
     python build\empacotar.py
-        -> dist\Robo NFSe Tomados\  e  dist\robo-nfse-tomados-v1.1.0-windows.zip
-    python build\empacotar.py --versao 1.1.1 --sem-zip
+        -> dist\Robo NFSe\  e  dist\robo-nfse-v2.0.0-windows.zip
+    python build\empacotar.py --versao 2.0.1 --sem-zip
 
 Precisa do Python com as bibliotecas do requirements.txt, do reportlab (para os PDFs irem no pacote) e do
 PyInstaller (pip install pyinstaller reportlab).
@@ -16,19 +16,21 @@ import zipfile
 from pathlib import Path
 
 RAIZ = Path(os.path.abspath(__file__)).parent.parent
-NOME = 'Robo NFSe Tomados'
+NOME = 'Robo NFSe'
 
-LEIA_ME = r"""ROBÔ NFS-e TOMADOS - interface local para Windows (versão {versao})
+LEIA_ME = r"""ROBÔ NFS-e - tomadas e prestadas - interface local para Windows (versão {versao})
 
 O que é
 Uma página no seu navegador, servida por este programa em 127.0.0.1, para buscar as
-NFS-e que uma empresa tomou no mês: você escolhe o certificado A1 (.pfx) da empresa,
-digita a senha, escolhe o município e a competência, e recebe um .zip com os XML, os
-PDFs e um relatório em Excel, já separados em "do município", "de fora" e canceladas.
+NFS-e que uma empresa TOMOU e as que ela PRESTOU no mês: você escolhe o certificado A1
+(.pfx) da empresa, digita a senha, escolhe o município, a competência e o que buscar, e
+recebe um .zip com os XML, os PDFs e um relatório em Excel. As tomadas vêm separadas em
+"do município", "de fora" e canceladas; em toda nota aparece o que foi retido (ISS,
+INSS, IRRF, PIS, COFINS, CSLL ou a soma CSRF), nota a nota e somado por tributo.
 
 Como usar
 1. Descompacte este zip numa pasta qualquer.
-2. Abra "Robo NFSe Tomados.exe". O navegador abre sozinho em http://127.0.0.1:8747/
+2. Abra "Robo NFSe.exe". O navegador abre sozinho em http://127.0.0.1:8747/
    (se não abrir, digite esse endereço).
 3. Na primeira vez o Windows pode avisar que o editor é desconhecido (SmartScreen).
    Clique em "Mais informações" e depois em "Executar assim mesmo".
@@ -40,14 +42,14 @@ Onde ficam as coisas
   descartados ao terminar. Nada disso vai para arquivo nem para a internet, além dos
   dois web services públicos (Prefeitura de São Paulo e Sistema Nacional NFS-e).
 - As notas baixadas e o último NSU de cada CNPJ ficam em
-  %LOCALAPPDATA%\RoboNFSeTomados (pastas "saida" e "estado"), para a próxima busca do
+  %LOCALAPPDATA%\RoboNFSe (pastas "saida" e "estado"), para a próxima busca do
   mesmo CNPJ ser incremental. Pode apagar essa pasta quando quiser.
-- Avisos do programa: %LOCALAPPDATA%\RoboNFSeTomados\interface.log.
+- Avisos do programa: %LOCALAPPDATA%\RoboNFSe\interface.log.
 
 Sem certificado à mão, o botão "Ver com dados simulados" roda o fluxo inteiro com
 empresas e notas fictícias.
 
-Código-fonte e documentação: https://github.com/DiogusVincere/robo-nfse-tomados
+Código-fonte e documentação: https://github.com/DiogusVincere/robo-nfse
 Licença MIT (LICENCA.txt).
 """
 
@@ -84,7 +86,7 @@ def compactar(pacote: Path, zip_destino: Path) -> Path:
 
 def main() -> None:
     p = argparse.ArgumentParser(description='Monta o pacote portátil da interface local.')
-    p.add_argument('--versao', default='1.1.0')
+    p.add_argument('--versao', default='2.0.0')
     p.add_argument('--saida', default=str(RAIZ / 'dist'))
     p.add_argument('--trabalho', default=str(RAIZ / 'build' / 'pyinstaller'))
     p.add_argument('--sem-zip', action='store_true')
@@ -97,7 +99,7 @@ def main() -> None:
     tamanho = sum(f.stat().st_size for f in pacote.rglob('*') if f.is_file())
     print(f'\nPacote: {pacote}  ({tamanho / 1e6:.1f} MB)')
     if not args.sem_zip:
-        destino = compactar(pacote, saida / f'robo-nfse-tomados-v{args.versao}-windows.zip')
+        destino = compactar(pacote, saida / f'robo-nfse-v{args.versao}-windows.zip')
         print(f'Zip: {destino}  ({destino.stat().st_size / 1e6:.1f} MB)')
 
 

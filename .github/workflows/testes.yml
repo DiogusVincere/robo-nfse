@@ -34,9 +34,9 @@ jobs:
 
       - name: Demonstração offline (duas execuções na mesma pasta)
         run: |
-          python robo_nfse_tomados.py --demo --saida /tmp/demo
+          python robo_nfse.py --demo --saida /tmp/demo
           echo "--- segunda execução: o que já foi escriturado não é declarado de novo ---"
-          python robo_nfse_tomados.py --demo --saida /tmp/demo 2>&1 | tee /tmp/demo-2.log
+          python robo_nfse.py --demo --saida /tmp/demo 2>&1 | tee /tmp/demo-2.log
           grep -q "já escriturada" /tmp/demo-2.log
 
       - name: Conferir os relatórios gerados

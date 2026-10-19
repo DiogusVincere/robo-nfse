@@ -104,7 +104,7 @@ class TestLinhaDeComando(unittest.TestCase):
     def test_demo_pela_linha_de_comando(self):
         with tempfile.TemporaryDirectory() as tmp:
             # o basicConfig do main ligaria a saída de log no terminal para o resto da suíte
-            with mock.patch.object(robo.logging, 'basicConfig'), self.assertLogs('nfse_tomados', 'INFO') as logs:
+            with mock.patch.object(robo.logging, 'basicConfig'), self.assertLogs('nfse', 'INFO') as logs:
                 robo.main(['--demo', '--saida', tmp])
             self.assertEqual(len(list((Path(tmp) / '_relatorios').glob('*.xlsx'))), 2)
             self.assertTrue(any('demonstração concluída' in m for m in logs.output))

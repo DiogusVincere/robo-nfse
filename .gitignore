@@ -1,5 +1,5 @@
 # Saída do robô (pastas por empresa, estado, relatórios)
-saida_nfse_tomados/
+saida_nfse/
 
 # Python
 __pycache__/

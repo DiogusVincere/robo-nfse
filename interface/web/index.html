@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Robô NFS-e Tomados · interface local</title>
+  <title>Robô NFS-e · tomadas e prestadas · interface local</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231F4E5F'/%3E%3Cpath d='M20 14h17l9 9v27H20z' fill='%23F3F5F7'/%3E%3Cpath d='M37 14v9h9' fill='%23C98A1B'/%3E%3Cpath d='M26 32h14M26 38h14M26 44h9' stroke='%231F4E5F' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/estilo.css">
   <script>window.TOKEN = '__TOKEN__'; window.VERSAO = '__VERSAO__';</script>
@@ -12,10 +12,10 @@
   <header class="topo">
     <div class="marca">
       <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1F4E5F"/><path d="M20 14h17l9 9v27H20z" fill="#F3F5F7"/><path d="M37 14v9h9" fill="#C98A1B"/><path d="M26 32h14M26 38h14M26 44h9" stroke="#1F4E5F" stroke-width="2.5" stroke-linecap="round"/></svg>
-      <div><strong>Robô NFS-e Tomados</strong><small>interface local · v__VERSAO__</small></div>
+      <div><strong>Robô NFS-e</strong><small>tomadas e prestadas · interface local · v__VERSAO__</small></div>
     </div>
     <div class="topo__acoes">
-      <a class="btn btn--fantasma" href="https://github.com/DiogusVincere/robo-nfse-tomados" target="_blank" rel="noopener">Código</a>
+      <a class="btn btn--fantasma" href="https://github.com/DiogusVincere/robo-nfse" target="_blank" rel="noopener">Código</a>
       <button type="button" class="btn btn--fantasma" id="btn-encerrar">Encerrar</button>
     </div>
   </header>
@@ -30,7 +30,7 @@
 
       <form id="form" novalidate>
         <fieldset class="passo">
-          <legend><span class="passo__num">1</span> Certificado A1 da empresa tomadora</legend>
+          <legend><span class="passo__num">1</span> Certificado A1 da empresa</legend>
           <div class="solta" id="solta">
             <input type="file" id="pfx" accept=".pfx,.p12,application/x-pkcs12" hidden>
             <p>Arraste o arquivo <strong>.pfx</strong> aqui ou <button type="button" class="link" id="btn-escolher">escolha no computador</button></p>
@@ -51,18 +51,25 @@
         </fieldset>
 
         <fieldset class="passo">
-          <legend><span class="passo__num">2</span> Empresa e competência</legend>
+          <legend><span class="passo__num">2</span> Empresa, competência e o que buscar</legend>
           <label class="campo campo--busca">
             <span>Município da empresa</span>
             <input type="text" id="municipio" placeholder="Digite o nome da cidade" autocomplete="off" spellcheck="false">
             <input type="hidden" id="municipio-ibge">
             <ul id="municipio-lista" class="sugestoes" hidden></ul>
-            <small class="texto-suave" id="municipio-dica">Define o que é "do município" (não se declara) e o que é "de fora" (precisa ser escriturado).</small>
+            <small class="texto-suave" id="municipio-dica">Nas tomadas, define o que é "do município" (não se declara) e o que é "de fora" (precisa ser escriturado).</small>
           </label>
           <label class="campo">
             <span>Competência</span>
             <input type="month" id="competencia">
           </label>
+          <div class="campo">
+            <span>O que buscar</span>
+            <div class="papeis">
+              <label><input type="checkbox" id="papel-tomada" checked> <span><strong>Tomadas</strong> <small class="texto-suave">— o que a empresa contratou</small></span></label>
+              <label><input type="checkbox" id="papel-prestada" checked> <span><strong>Prestadas</strong> <small class="texto-suave">— o que ela emitiu e o que os clientes retiveram</small></span></label>
+            </div>
+          </div>
           <label class="campo campo--check">
             <input type="checkbox" id="desde-inicio">
             <span>Buscar desde o início no Sistema Nacional <small class="texto-suave">(ignora o último NSU guardado deste CNPJ; a busca fica mais longa)</small></span>
@@ -76,9 +83,9 @@
       <button type="button" class="btn btn--secundario btn--bloco" id="btn-simular">Ver com dados simulados</button>
 
       <p class="rodape-form texto-suave">
-        Fontes: Nota Paulistana (SOAP assinado, mTLS) e Sistema Nacional NFS-e (REST por NSU, mTLS).
-        A primeira busca de um CNPJ no Sistema Nacional percorre o histórico inteiro, de 50 em 50 documentos,
-        e pode levar alguns minutos; as seguintes são incrementais.
+        Fontes: Nota Paulistana (SOAP assinado, mTLS; recebidas e emitidas) e Sistema Nacional NFS-e (REST por NSU, mTLS;
+        tudo em que o CNPJ aparece). A primeira busca de um CNPJ no Sistema Nacional percorre o histórico inteiro,
+        de 50 em 50 documentos, e pode levar alguns minutos; as seguintes são incrementais.
       </p>
     </section>
 
@@ -86,10 +93,10 @@
       <div id="vazio" class="cartao vazio">
         <h2>O que acontece quando você clica em "Buscar"</h2>
         <ol class="etapas">
-          <li><strong>Extração.</strong> Com o certificado da empresa, o robô consulta as NFS-e tomadas nas duas fontes públicas, sem navegador.</li>
-          <li><strong>Organização.</strong> Cada nota vira XML e PDF na pasta da competência certa (<code>NFE/&lt;ano&gt;/&lt;MM-AAAA&gt;/Tomados/…</code>).</li>
-          <li><strong>Classificação.</strong> Separa o que é do município, o que é de fora (e precisa ser escriturado) e o que foi cancelado, sem repetir a mesma nota vinda pelas duas fontes.</li>
-          <li><strong>Entrega.</strong> Um <strong>.zip</strong> com tudo isso e um relatório em Excel, mais a lista aqui na tela.</li>
+          <li><strong>Extração.</strong> Com o certificado da empresa, o robô consulta nas duas fontes públicas, sem navegador, as NFS-e que ela tomou e as que ela prestou.</li>
+          <li><strong>Organização.</strong> Cada nota vira XML e PDF na pasta da competência certa (<code>NFE/&lt;ano&gt;/&lt;MM-AAAA&gt;/Tomados/…</code> e <code>…/Prestados/…</code>).</li>
+          <li><strong>Classificação e retenções.</strong> Nas tomadas, separa o que é do município, o que é de fora (e precisa ser escriturado) e o que foi cancelado. Em toda nota, lê o que foi retido: ISS, INSS, IRRF, PIS, COFINS, CSLL (ou a soma CSRF, quando o leiaute só traz a soma).</li>
+          <li><strong>Entrega.</strong> Um <strong>.zip</strong> com tudo isso e um relatório em Excel (abas Empresas, Notas e Retenções), mais a lista aqui na tela.</li>
         </ol>
         <p class="texto-suave">A escrituração no portal da prefeitura (etapa 4 do robô) não entra nesta versão: depende do portal de cada município. A lista do que escriturar sai no relatório.</p>
       </div>
@@ -115,18 +122,18 @@
           <button type="button" id="btn-baixar" class="btn btn--primario btn--grande">Baixar o .zip</button>
           <div>
             <strong id="zip-nome"></strong>
-            <small class="texto-suave">XML e PDF de cada nota em <code>NFE/&lt;ano&gt;/&lt;MM-AAAA&gt;/Tomados/…</code>, mais o relatório em Excel.</small>
+            <small class="texto-suave">XML e PDF de cada nota em <code>NFE/&lt;ano&gt;/&lt;MM-AAAA&gt;/Tomados/…</code> e <code>…/Prestados/…</code>, mais o relatório em Excel.</small>
             <small class="texto-suave" id="pasta-local"></small>
           </div>
         </div>
         <div id="pendencias" class="aviso aviso--ambar" hidden></div>
         <div class="filtros">
           <div class="chips" id="chips"></div>
-          <input type="search" id="filtro" class="entrada" placeholder="Filtrar por prestador, número ou CNPJ">
+          <input type="search" id="filtro" class="entrada" placeholder="Filtrar por prestador, tomador, número ou CNPJ">
         </div>
         <div class="tabela-envolve">
           <table class="tabela" id="tabela">
-            <thead><tr><th>Fonte</th><th>Nº</th><th>Emissão</th><th>Prestador</th><th>Município</th><th class="num">Valor</th><th class="num">ISS</th><th>Situação</th></tr></thead>
+            <thead><tr><th>Papel · fonte</th><th>Nº</th><th>Emissão</th><th>Prestador / tomador · município</th><th class="num">Valor</th><th class="num">ISS</th><th>Retido</th><th>Situação</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -139,7 +146,7 @@
   </main>
 
   <footer class="pe">
-    Robô NFS-e Tomados · <a href="https://github.com/DiogusVincere/robo-nfse-tomados" target="_blank" rel="noopener">código e documentação</a> · licença MIT
+    Robô NFS-e · <a href="https://github.com/DiogusVincere/robo-nfse" target="_blank" rel="noopener">código e documentação</a> · licença MIT
   </footer>
   <div id="toast" class="toast" hidden></div>
   <script src="/app.js"></script>

@@ -3,7 +3,8 @@
 "real" com fontes falsas (sem rede), zip da competência, validações e encerramento.
 
 O certificado é autoassinado, gerado aqui; os web services são substituídos por clientes de mentira que devolvem
-os XMLs sintéticos de test_leitura_xml."""
+os XMLs sintéticos de test_leitura_xml: uma tomada de SP, uma tomada do Nacional e uma PRESTADA do Nacional com
+retenções federais."""
 import base64
 import io
 import json
@@ -34,15 +35,22 @@ XML_NACIONAL_SET = (tl.XML_NACIONAL
 
 class FonteSPFalsa:
     def consultar_recebidas(self, cert, senha, comp):
-        robo.log.info('Nota Paulistana: página 1, 1 nota(s)')
+        robo.log.info('Nota Paulistana (tomadas): página 1, 1 nota(s)')
         return [tl.XML_SP]
+
+    def consultar_emitidas(self, cert, senha, comp):
+        robo.log.info('Nota Paulistana (prestadas): página 1, 0 nota(s)')
+        return []
 
 
 class FonteNacionalFalsa:
+    """NSU 7: a tomada; NSU 8: a prestada (a distribuição devolve tudo em que o CNPJ aparece)."""
+
     def distribuir(self, cert, senha, ultimo_nsu):
-        if ultimo_nsu >= 7:
-            return [], ultimo_nsu
-        return [{'nsu': 7, 'chave': tl.CHAVE_NACIONAL, 'tipo': 'NFSE', 'xml': XML_NACIONAL_SET}], 7
+        docs = [{'nsu': 7, 'chave': tl.CHAVE_NACIONAL, 'tipo': 'NFSE', 'xml': XML_NACIONAL_SET},
+                {'nsu': 8, 'chave': tl.CHAVE_PRESTADA, 'tipo': 'NFSE', 'xml': tl.XML_PRESTADA}]
+        novos = [d for d in docs if d['nsu'] > ultimo_nsu]
+        return novos, max([ultimo_nsu] + [d['nsu'] for d in novos])
 
 
 def fontes_falsas():
@@ -101,7 +109,7 @@ class TestInterface(unittest.TestCase):
         self.assertGreater(len(lista), 5000)
         self.assertIn(['3509502', 'Campinas', 'SP'], lista)
         self.assertEqual(self.pedir('GET', '/nao-existe.css', token=False)[0], 404)
-        self.assertEqual(self.pedir('GET', '/../robo_nfse_tomados.py', token=False)[0], 404)
+        self.assertEqual(self.pedir('GET', '/../robo_nfse.py', token=False)[0], 404)
         # a API só responde com o token
         self.assertEqual(self.pedir('GET', '/api/estado', token=False)[0], 403)
         self.assertEqual(self.pedir('POST', '/api/simular', {}, token=False)[0], 403)
@@ -136,6 +144,11 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(self.pedir('POST', '/api/buscar', dict(base, competencia='01/2999'))[0], 400)
         self.assertEqual(self.pedir('POST', '/api/buscar', dict(base, pfx_b64=''))[0], 400)
         self.assertEqual(self.pedir('POST', '/api/buscar', dict(base, pfx_b64='%%%'))[0], 400)
+        status, erro, _ = self.pedir('POST', '/api/buscar', dict(base, papeis=[]))
+        self.assertEqual(status, 400)
+        self.assertIn('tomadas', erro['erro'])
+        self.assertEqual(self.pedir('POST', '/api/buscar', dict(base, papeis=['intermediada']))[0], 400)
+        self.assertEqual(self.pedir('POST', '/api/buscar', dict(base, papeis='tomada'))[0], 400)
         self.assertEqual(self.pedir('POST', '/api/nao-existe', {})[0], 404)
 
     def test_04_busca_simulada(self):
@@ -149,9 +162,13 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(len(res['empresas']), 6)
         self.assertEqual(res['totais']['notas'], len(res['notas']))
         self.assertGreater(res['totais']['notas'], 20)
+        self.assertEqual(res['totais']['tomadas'] + res['totais']['prestadas'], res['totais']['notas'])
+        self.assertGreater(res['totais']['prestadas'], 0)
+        self.assertGreater(res['totais']['retido_prestadas'], 0)
         self.assertGreater(sum(e['escrituradas'] for e in res['empresas']), 0)
+        self.assertTrue(all('retencoes' in n and 'papel' in n for n in res['notas']))
         self.assertTrue(any('Pronto' in m['texto'] for m in t['mensagens']))
-        self.assertTrue(t['zip'].startswith('demonstracao-nfse-tomados-'))
+        self.assertTrue(t['zip'].startswith('demonstracao-nfse-'))
         status, corpo, cab = self.pedir('GET', '/api/baixar', bruto=True)
         self.assertEqual(status, 200)
         self.assertIn('attachment', cab.get('Content-Disposition', ''))
@@ -159,6 +176,7 @@ class TestInterface(unittest.TestCase):
             nomes = zf.namelist()
         self.assertTrue(any(n.endswith('.xlsx') for n in nomes))
         self.assertTrue(any('/Notas Escrituradas/' in n for n in nomes))
+        self.assertTrue(any('/Prestados/Prestados ' in n for n in nomes))
         self.assertEqual(self.pedir('POST', '/api/limpar', {})[0], 200)
         self.assertIsNone(self.pedir('GET', '/api/estado')[1]['trabalho'])
 
@@ -180,17 +198,30 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(res['competencia'], '09/2026')
         self.assertEqual([e['razao'] for e in res['empresas']], ['EMPRESA EXEMPLO A LTDA'])
         self.assertEqual(res['empresas'][0]['cnpj'], suporte.CNPJ_A)
-        self.assertEqual(res['totais']['documentos_lidos'], 2)
-        self.assertEqual(res['totais']['notas'], 2)
-        self.assertEqual(res['totais']['sp'], 1)
-        self.assertEqual(res['totais']['nacional'], 1)
-        self.assertEqual(res['totais']['fora'], 2)                        # prestadores de outros municípios
-        self.assertEqual(res['totais']['iss_retido'], 125.0)              # 50 (SP, retido) + 75 (Nacional, retido)
-        numeros = sorted(n['numero'] for n in res['notas'])
-        self.assertEqual(numeros, ['4521', '88'])
-        self.assertTrue(all(n['situacao'].startswith('fora do município') for n in res['notas']))
+        tot = res['totais']
+        self.assertEqual(tot['documentos_lidos'], 3)
+        self.assertEqual(tot['notas'], 3)
+        self.assertEqual((tot['tomadas'], tot['prestadas']), (2, 1))
+        self.assertEqual((tot['sp'], tot['nacional']), (1, 2))
+        self.assertEqual(tot['fora'], 2)                                  # as duas tomadas são de outros municípios
+        self.assertEqual(tot['iss_retido'], 125.0)                        # 50 (SP, retido) + 75 (Nacional, retido)
+        self.assertEqual(tot['retido_tomadas'], 125.0)
+        self.assertEqual(tot['retido_prestadas'], 171.5)                  # INSS 110 + IRRF 15 + CSRF 46,50
+        self.assertEqual(tot['com_retencao'], 3)
+        self.assertEqual(tot['conferir'], 0)
+        self.assertEqual(sorted(n['numero'] for n in res['notas']), ['4521', '501', '88'])
+        prestada = next(n for n in res['notas'] if n['papel'] == 'prestada')
+        self.assertEqual(prestada['numero'], '501')
+        self.assertEqual(prestada['situacao'], 'prestada — com retenção')
+        self.assertEqual(prestada['contraparte'], 'Cliente Exemplo B')
+        self.assertEqual(prestada['retencoes']['inss'], 110.0)
+        self.assertEqual(prestada['retencoes']['csrf_quais'], 'PIS+COFINS+CSLL')
+        self.assertEqual(prestada['retencoes_lista'], ['INSS', 'IRRF', 'CSRF (PIS+COFINS+CSLL)'])
+        self.assertEqual(prestada['valor_liquido'], 828.5)
+        self.assertTrue(all(n['situacao'].startswith('fora do município') for n in res['notas'] if n['papel'] == 'tomada'))
         self.assertTrue(any('Certificado de EMPRESA EXEMPLO A LTDA' in m['texto'] for m in t['mensagens']))
-        self.assertTrue(t['zip'].startswith(f'NFS-e tomadas {suporte.CNPJ_A} 09-2026'))
+        self.assertTrue(any('notas tomadas e notas prestadas' in m['texto'] for m in t['mensagens']))
+        self.assertTrue(t['zip'].startswith(f'NFS-e {suporte.CNPJ_A} 09-2026'))
 
         status, zipado, _ = self.pedir('GET', '/api/baixar', bruto=True)
         self.assertEqual(status, 200)
@@ -198,17 +229,28 @@ class TestInterface(unittest.TestCase):
             nomes = zf.namelist()
         self.assertIn('EMPRESA EXEMPLO A LTDA/NFE/2026/09-2026/Tomados/Tomados SP/Autorizadas/Prestador Exemplo 1 NF 4521.xml', nomes)
         self.assertIn('EMPRESA EXEMPLO A LTDA/NFE/2026/09-2026/Tomados/Tomados Portal Nacional/Autorizadas/Prestador Exemplo 2 NF 88.xml', nomes)
-        self.assertIn('EMPRESA EXEMPLO A LTDA/Relatorio NFS-e tomadas 09-2026.xlsx', nomes)
+        self.assertIn('EMPRESA EXEMPLO A LTDA/NFE/2026/09-2026/Prestados/Prestados Portal Nacional/Autorizadas/Cliente Exemplo B NF 501.xml', nomes)
+        self.assertIn('EMPRESA EXEMPLO A LTDA/Relatorio NFS-e 09-2026.xlsx', nomes)
 
         # a saída é persistente por CNPJ e o NSU ficou guardado: a 2ª busca é incremental e devolve as mesmas notas
         pasta_local = Path(res['pasta_local'])
         self.assertTrue(pasta_local.is_dir())
-        self.assertEqual(robo.EstadoRobo(self.pasta / 'dados' / 'estado').ultimo_nsu(suporte.CNPJ_A), 7)
+        self.assertEqual(robo.EstadoRobo(self.pasta / 'dados' / 'estado').ultimo_nsu(suporte.CNPJ_A), 8)
         status, resp, _ = self.pedir('POST', '/api/buscar', corpo)
         self.assertEqual(status, 202)
         t2 = self.esperar()
         self.assertIsNone(t2['erro'], t2['mensagens'][-3:])
-        self.assertEqual(sorted(n['numero'] for n in t2['resultado']['notas']), ['4521', '88'])
+        self.assertEqual(sorted(n['numero'] for n in t2['resultado']['notas']), ['4521', '501', '88'])
+        self.assertEqual(t2['resultado']['totais']['retido_prestadas'], 171.5)
+
+        # só as tomadas: a prestada já salva na pasta não entra, e nada do Nacional se perde
+        status, resp, _ = self.pedir('POST', '/api/buscar', dict(corpo, papeis=['tomada']))
+        self.assertEqual(status, 202)
+        t3 = self.esperar()
+        self.assertIsNone(t3['erro'], t3['mensagens'][-3:])
+        self.assertEqual(sorted(n['numero'] for n in t3['resultado']['notas']), ['4521', '88'])
+        self.assertEqual(t3['resultado']['totais']['prestadas'], 0)
+        self.assertTrue(any('Buscando notas tomadas.' in m['texto'] for m in t3['mensagens']))
         # o certificado temporário foi apagado
         self.assertFalse(list(Path(tempfile.gettempdir()).glob('robo_nfse_*/certificado')))
         self.pedir('POST', '/api/limpar', {})
