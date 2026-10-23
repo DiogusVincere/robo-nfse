@@ -253,6 +253,12 @@ class Retencoes:
     def tem(self) -> bool:
         return self.total > 0
 
+    @property
+    def do_tomador(self) -> float:
+        """O que o próprio TOMADOR reteve e vai recolher: as federais e o ISS — menos o ISS retido pelo intermediário,
+        que é ele quem recolhe. É a parte de `total` que entra em 'a empresa recolhe' nas tomadas."""
+        return round(self.federais + (0.0 if self.iss_por == 'intermediário' else self.iss), 2)
+
     def quais(self) -> list[str]:
         """Nomes do que foi retido, na ordem em que o fiscal confere: ['ISS', 'INSS', 'IRRF', 'CSRF (PIS+COFINS+CSLL)']."""
         pares = [('ISS', self.iss), ('INSS', self.inss), ('IRRF', self.irrf), ('PIS', self.pis),
@@ -287,24 +293,26 @@ class Nota:
     valor_servico: float
     aliquota: float                                     # em %, ex.: 2.0
     valor_iss: float
-    iss_retido: bool = False                            # derivado de `retencoes` (ver __post_init__)
+    # `iss_retido` e `valor_liquido` entram no construtor por comodidade (demonstração, testes, vLiq do XML), mas
+    # NÃO são guardados: `retencoes` é a única fonte da verdade — ver as propriedades logo abaixo da classe.
+    iss_retido: dataclasses.InitVar[bool] = False
     cancelada: bool = False
     xml: str = dataclasses.field(default='', repr=False)
     papel: str = 'tomada'                               # 'tomada' (a empresa é o tomador) ou 'prestada' (é o prestador)
     tomador_nome: str = ''
     tomador_municipio_ibge: str = ''
     retencoes: Retencoes = dataclasses.field(default_factory=Retencoes)
-    valor_liquido: Optional[float] = None               # vLiq do Nacional; sem ele, valor do serviço − retenções
+    valor_liquido: dataclasses.InitVar[Optional[float]] = None
+    valor_liquido_lido: Optional[float] = dataclasses.field(default=None, repr=False)   # vLiq do Nacional, se veio
 
-    def __post_init__(self):
+    def __post_init__(self, iss_retido: bool = False, valor_liquido: Optional[float] = None):
         r = self.retencoes
         if r.iss or r.iss_por:                           # quem leu o XML preencheu a retenção: ela é a fonte da verdade
-            self.iss_retido = True
             r.iss_por = r.iss_por or 'tomador'
-        elif self.iss_retido:                            # quem monta a nota só com o booleano (demonstração, testes)
+        elif iss_retido:                                 # quem monta a nota só com o booleano (demonstração, testes)
             r.iss, r.iss_por = round(self.valor_iss, 2), 'tomador'
-        if self.valor_liquido is None:
-            self.valor_liquido = round(self.valor_servico - self.retencoes.total, 2)
+        if valor_liquido is not None:
+            self.valor_liquido_lido = valor_liquido
 
     @property
     def identidade(self) -> tuple:
@@ -315,6 +323,35 @@ class Nota:
     def contraparte(self) -> str:
         """Quem está do outro lado: o prestador numa tomada, o tomador numa prestada (dá nome ao arquivo)."""
         return self.tomador_nome if self.papel == 'prestada' else self.prestador_nome
+
+
+def _iss_retido(self: Nota) -> bool:
+    return bool(self.retencoes.iss or self.retencoes.iss_por)
+
+
+def _definir_iss_retido(self: Nota, valor: bool) -> None:
+    if valor:
+        self.retencoes.iss, self.retencoes.iss_por = round(self.valor_iss, 2), self.retencoes.iss_por or 'tomador'
+    else:
+        self.retencoes.iss, self.retencoes.iss_por = 0.0, ''
+
+
+def _valor_liquido(self: Nota) -> float:
+    """O vLiq do XML quando veio; senão, valor do serviço − tudo o que foi retido. Sempre calculado a partir de
+    `retencoes`, para não desalinhar quando alguém troca as retenções depois de montar a nota."""
+    if self.valor_liquido_lido is not None:
+        return self.valor_liquido_lido
+    return round(self.valor_servico - self.retencoes.total, 2)
+
+
+def _definir_valor_liquido(self: Nota, valor: Optional[float]) -> None:
+    self.valor_liquido_lido = valor
+
+
+# As propriedades são ligadas DEPOIS do decorador: dentro da classe, o nome `iss_retido` é o InitVar do construtor
+# (um atributo de classe com o mesmo nome viraria o "default" do parâmetro).
+Nota.iss_retido = property(_iss_retido, _definir_iss_retido)
+Nota.valor_liquido = property(_valor_liquido, _definir_valor_liquido)
 
 
 @dataclasses.dataclass
@@ -331,8 +368,19 @@ class ResultadoEmpresa:
     notas: list = dataclasses.field(default_factory=list)   # [(Nota, situação)]
 
     def retido(self, papel: str) -> float:
-        """Soma das retenções das notas ativas de um papel — o que a empresa recolhe (tomadas) ou abate (prestadas)."""
-        return round(sum(n.retencoes.total for n, _ in self.notas if n.papel == papel and not n.cancelada), 2)
+        """Soma das retenções das notas ativas de um papel — o que a empresa recolhe (tomadas: só o que ela mesma
+        reteve, sem o ISS retido pelo intermediário) ou abate (prestadas: tudo o que os clientes retiveram)."""
+        return round(sum(retido_pela_empresa(n) for n, _ in self.notas if n.papel == papel and not n.cancelada), 2)
+
+
+def retido_pela_empresa(n: Nota) -> float:
+    """Numa tomada, o que a empresa (tomadora) reteve e recolhe; numa prestada, tudo o que retiveram dela."""
+    return n.retencoes.do_tomador if n.papel != 'prestada' else n.retencoes.total
+
+
+def iss_retido_pela_empresa(n: Nota) -> float:
+    """ISS que a empresa recolhe por ter retido numa tomada (o retido pelo intermediário não é dela)."""
+    return n.retencoes.iss if n.papel != 'prestada' and n.retencoes.iss_por != 'intermediário' else 0.0
 
 
 # =====================================================================================================================
@@ -783,6 +831,19 @@ class EstadoRobo:
         self.dados['ledger'].setdefault(cnpj, []).append(chave)
         self.gravar()
 
+    def canceladas(self, cnpj: str) -> set[str]:
+        """Chaves canceladas já vistas na distribuição deste CNPJ (em qualquer execução)."""
+        return set(self.dados.get('canceladas', {}).get(cnpj, []))
+
+    def registrar_canceladas(self, cnpj: str, chaves: Iterable[str]):
+        """O evento de cancelamento só vem UMA vez pelo NSU. Se a nota estava arquivada (outra competência, ou papel
+        não pedido naquela execução), ela só será lida depois — e precisa continuar cancelada. Por isso fica aqui."""
+        novas = set(chaves) - self.canceladas(cnpj)
+        if not novas:
+            return
+        self.dados.setdefault('canceladas', {}).setdefault(cnpj, []).extend(sorted(novas))
+        self.gravar()
+
     def arquivar(self, cnpj: str, nota: Nota):
         """Documento de OUTRA competência, ou de um papel que não foi pedido nesta execução (o NSU traz tudo o que é
         novo): guardado, para quando aquela competência ou aquele papel for processado — nada se perde."""
@@ -1006,8 +1067,8 @@ COLUNAS_NOTAS = ['Código', 'Papel', 'Fonte', 'Nº', 'Emissão', 'Prestador', 'C
                  'Município (IBGE)', 'Valor', 'Alíquota %', 'ISS', 'ISS retido', 'INSS retido', 'IRRF retido',
                  'PIS retido', 'COFINS retido', 'CSLL retida', 'CSRF retida', 'Total retido', 'Valor líquido',
                  'Retenções', 'Situação']
-COLUNAS_RETENCOES = ['Código', 'Empresa', 'Papel', 'Notas com retenção', 'ISS', 'INSS', 'IRRF', 'PIS', 'COFINS', 'CSLL',
-                     'CSRF (PIS+COFINS+CSLL)', 'Total']
+COLUNAS_RETENCOES = ['Código', 'Empresa', 'Papel', 'Notas com retenção', 'ISS', 'ISS pelo intermediário', 'INSS', 'IRRF',
+                     'PIS', 'COFINS', 'CSLL', 'CSRF (PIS+COFINS+CSLL)', 'Total']
 
 
 def gerar_relatorio(resultados: list[ResultadoEmpresa], comp: Competencia, destino: Path) -> Path:
@@ -1036,11 +1097,14 @@ def gerar_relatorio(resultados: list[ResultadoEmpresa], comp: Competencia, desti
                           'sim' if n.iss_retido else 'não', t.inss, t.irrf, t.pis, t.cofins, t.csll, t.csrf,
                           t.total, n.valor_liquido, t.descricao(), situacao])
         for papel in PAPEIS:
-            com = [n.retencoes for n, _ in r.notas if n.papel == papel and not n.cancelada and n.retencoes.tem]
+            # "Total" é o que a empresa recolhe (tomadas: sem o ISS do intermediário) ou abate (prestadas: tudo)
+            com = [n for n, _ in r.notas if n.papel == papel and not n.cancelada and n.retencoes.tem]
             if com:
-                soma = lambda campo: round(sum(getattr(x, campo) for x in com), 2)   # noqa: E731
-                ret.append([e.codigo, e.razao, papel, len(com), soma('iss'), soma('inss'), soma('irrf'), soma('pis'),
-                            soma('cofins'), soma('csll'), soma('csrf'), soma('total')])
+                soma = lambda campo: round(sum(getattr(n.retencoes, campo) for n in com), 2)   # noqa: E731
+                iss_interm = round(sum(n.retencoes.iss for n in com if n.retencoes.iss_por == 'intermediário'), 2)
+                ret.append([e.codigo, e.razao, papel, len(com), round(soma('iss') - iss_interm, 2), iss_interm,
+                            soma('inss'), soma('irrf'), soma('pis'), soma('cofins'), soma('csll'), soma('csrf'),
+                            round(sum(retido_pela_empresa(n) for n in com), 2)])
     for ws in (emp, notas, ret):
         for c in ws[1]:
             c.font = Font(bold=True, color='FFFFFF')
@@ -1092,9 +1156,11 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
     """ETAPA 1+2 de uma empresa: busca nas duas fontes as notas que ela TOMOU e/ou PRESTOU (conforme `papeis`), fica
     com as da competência pedida; o resto do Nacional vai para o arquivo. Usa também o que já tinha sido arquivado
     em execuções anteriores."""
-    papeis = set(papeis)
+    papeis = [p for p in PAPEIS if p in set(papeis)]                    # ordem fixa: tomada, depois prestada
     notas: list[Nota] = []
-    canceladas: set[str] = set()
+    # cancelamentos: os desta distribuição + os já vistos antes (o evento vem uma vez só; a nota pode ter ficado
+    # arquivada e só ser lida agora)
+    canceladas: set[str] = estado.canceladas(empresa.cnpj)
     if cert is None:
         raise RuntimeError('sem certificado A1 válido')
     senha = senhas.senha(empresa.cnpj)
@@ -1106,7 +1172,9 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
             notas += [nota_de_sp(x, 'prestada') for x in sp.consultar_emitidas(cert, senha, comp)]
     if 'Nacional' in fontes:
         docs, ultimo = fontes['Nacional'].distribuir(cert, senha, estado.ultimo_nsu(empresa.cnpj))
-        canceladas = chaves_canceladas(docs)
+        novas = chaves_canceladas(docs)
+        estado.registrar_canceladas(empresa.cnpj, novas)                 # antes de avançar o NSU
+        canceladas |= novas
         for d in docs:
             with contextlib.suppress(Exception):
                 n = nota_nacional(d['xml'], empresa.cnpj)
@@ -1319,7 +1387,7 @@ def demonstracao(saida: Path, resultados: Optional[list] = None) -> list[Path]:
         for n in notas:
             r = retencoes_ficticias(ret, n.valor_servico)
             r.iss, r.iss_por = n.retencoes.iss, n.retencoes.iss_por
-            n.retencoes, n.valor_liquido = r, round(n.valor_servico - r.total, 2)
+            n.retencoes = r                                              # o líquido acompanha sozinho (propriedade)
         if notas:                                                       # a mesma nota pelas duas fontes (dedup),
             notas.append(dataclasses.replace(notas[0], fonte='SP' if notas[0].fonte == 'Nacional' else 'Nacional'))
             notas[-1].retencoes = dataclasses.replace(notas[0].retencoes)   # com as MESMAS retenções da original

@@ -2,6 +2,7 @@
 """Seções 5 (partes puras dos clientes), 6 (XML → Nota, inclusive as RETENÇÕES) e 11 (renumeração) com XMLs
 sintéticos mínimos."""
 import base64
+import dataclasses
 import datetime as dt
 import gzip
 import unittest
@@ -341,6 +342,39 @@ class TestNota(unittest.TestCase):
         self.assertEqual(r.quais(), [])
         self.assertEqual(r.descricao(), 'nenhuma')
         self.assertIsNone(r.divergencia())
+
+    def test_iss_retido_e_valor_liquido_sao_derivados(self):
+        """`iss_retido` e `valor_liquido` não são campos guardados: saem das retenções, e trocar as retenções
+        (como faz a demonstração e o portal de escrituração) muda os dois sem precisar lembrar de recalcular."""
+        n = suporte.nota('1', valor=1000.0, aliquota=2.0)
+        self.assertFalse(n.iss_retido)
+        self.assertEqual(n.valor_liquido, 1000.0)
+        n.iss_retido = True                                                  # o jeito antigo continua valendo
+        self.assertEqual((n.retencoes.iss, n.retencoes.iss_por), (20.0, 'tomador'))
+        self.assertEqual(n.valor_liquido, 980.0)
+        n.retencoes = robo.Retencoes(inss=110.0)                             # troca inteira: o ISS some junto
+        self.assertFalse(n.iss_retido)
+        self.assertEqual(n.valor_liquido, 890.0)
+        n.iss_retido = False
+        self.assertEqual(n.valor_liquido, 890.0)
+        n.valor_liquido = 777.0                                              # vLiq lido do XML manda
+        self.assertEqual(n.valor_liquido, 777.0)
+        n.valor_liquido = None
+        self.assertEqual(n.valor_liquido, 890.0)
+        copia = dataclasses.replace(n, numero='2')                           # replace não perde nada disso
+        self.assertEqual((copia.iss_retido, copia.valor_liquido, copia.retencoes.inss), (False, 890.0, 110.0))
+
+    def test_do_tomador_exclui_o_iss_do_intermediario(self):
+        self.assertEqual(robo.Retencoes(iss=20.0, iss_por='tomador', inss=11.0).do_tomador, 31.0)
+        self.assertEqual(robo.Retencoes(iss=20.0, iss_por='intermediário', inss=11.0).do_tomador, 11.0)
+        self.assertEqual(robo.Retencoes(iss=20.0, iss_por='intermediário').total, 20.0)
+        tomada = suporte.nota('1', retencoes=robo.Retencoes(iss=20.0, iss_por='intermediário', inss=11.0))
+        prestada = suporte.nota('2', papel='prestada', retencoes=robo.Retencoes(iss=20.0, iss_por='tomador', inss=11.0))
+        self.assertEqual(robo.retido_pela_empresa(tomada), 11.0)
+        self.assertEqual(robo.retido_pela_empresa(prestada), 31.0)
+        self.assertEqual(robo.iss_retido_pela_empresa(tomada), 0.0)
+        self.assertEqual(robo.iss_retido_pela_empresa(prestada), 0.0)
+        self.assertEqual(robo.iss_retido_pela_empresa(suporte.nota('3', retido=True)), 20.0)
 
 
 class TestChavesCanceladas(unittest.TestCase):

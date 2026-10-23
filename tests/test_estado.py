@@ -36,6 +36,19 @@ class TestEstadoRobo(unittest.TestCase):
         self.assertEqual(est.ultimo_nsu(suporte.CNPJ_B), 0)                   # cada CNPJ tem o seu
         self.assertEqual(robo.EstadoRobo(self.pasta).ultimo_nsu(suporte.CNPJ_A), 12)   # relido do disco
 
+    def test_canceladas_persistem(self):
+        est = robo.EstadoRobo(self.pasta)
+        self.assertEqual(est.canceladas(suporte.CNPJ_A), set())
+        est.registrar_canceladas(suporte.CNPJ_A, {'CH-2', 'CH-1'})
+        est.registrar_canceladas(suporte.CNPJ_A, {'CH-1'})                     # repetida: não duplica
+        est.registrar_canceladas(suporte.CNPJ_A, [])                           # vazio: não grava nada
+        self.assertEqual(est.canceladas(suporte.CNPJ_A), {'CH-1', 'CH-2'})
+        self.assertEqual(est.canceladas(suporte.CNPJ_B), set())                # por CNPJ
+        relido = robo.EstadoRobo(self.pasta)
+        self.assertEqual(relido.canceladas(suporte.CNPJ_A), {'CH-1', 'CH-2'})
+        self.assertEqual(json.loads((self.pasta / 'estado.json').read_text('utf-8'))['canceladas'][suporte.CNPJ_A],
+                         ['CH-1', 'CH-2'])
+
     def test_ledger(self):
         est = robo.EstadoRobo(self.pasta)
         self.assertFalse(est.ja_escriturada(suporte.CNPJ_A, 'CH-1'))
@@ -125,6 +138,48 @@ class TestSalvarXmls(unittest.TestCase):
             self.assertEqual(a.read_text('utf-8'), autorizada.xml)
             tem_reportlab = importlib.util.find_spec('reportlab') is not None
             self.assertEqual(a.with_suffix('.pdf').exists(), tem_reportlab)    # espelho só com reportlab
+
+
+class _SenhaFixa(robo.SenhaProvider):
+    def senha(self, cnpj):
+        return 'x'
+
+
+class _NacionalPorRodada:
+    """Devolve, a cada chamada, a próxima lista de documentos (como se fossem NSUs novos chegando)."""
+
+    def __init__(self, rodadas):
+        self.rodadas = list(rodadas)
+
+    def distribuir(self, cert, senha, ultimo_nsu):
+        docs = self.rodadas.pop(0) if self.rodadas else []
+        return docs, max([ultimo_nsu] + [d['nsu'] for d in docs])
+
+
+class TestCancelamentoDeNotaArquivada(unittest.TestCase):
+    """O evento de cancelamento chega UMA vez pelo NSU. Se naquela rodada só se pediram as tomadas, a prestada vai
+    para o arquivo e o evento passa junto — na rodada das prestadas ela tem que sair cancelada mesmo assim."""
+
+    def test_cancelamento_sobrevive_ao_arquivo(self):
+        try:
+            from . import test_leitura_xml as tl
+        except ImportError:
+            import test_leitura_xml as tl
+        with tempfile.TemporaryDirectory() as tmp:
+            estado = robo.EstadoRobo(Path(tmp) / 'estado')
+            emp = suporte.empresa()
+            evento = f'<pedRegEvento><infPedReg><chNFSe>{tl.CHAVE_PRESTADA}</chNFSe></infPedReg></pedRegEvento>'
+            fonte = _NacionalPorRodada([[{'nsu': 1, 'chave': tl.CHAVE_PRESTADA, 'tipo': 'NFSE', 'xml': tl.XML_PRESTADA},
+                                         {'nsu': 2, 'chave': tl.CHAVE_PRESTADA, 'tipo': 'EVENTO', 'xml': evento}]])
+            fontes = {'Nacional': fonte}
+            so_tomadas = robo.extrair_empresa(emp, COMP, object(), _SenhaFixa(), estado, fontes, papeis=['tomada'])
+            self.assertEqual(so_tomadas, [])                                   # a prestada foi para o arquivo
+            self.assertEqual(estado.ultimo_nsu(suporte.CNPJ_A), 2)
+            self.assertEqual(estado.canceladas(suporte.CNPJ_A), {tl.CHAVE_PRESTADA})
+            # rodada seguinte, agora pelas prestadas: nenhum NSU novo, a nota vem do arquivo — e cancelada
+            prestadas = robo.extrair_empresa(emp, COMP, object(), _SenhaFixa(), robo.EstadoRobo(Path(tmp) / 'estado'),
+                                             fontes, papeis=['prestada'])
+            self.assertEqual([(n.numero, n.papel, n.cancelada) for n in prestadas], [('501', 'prestada', True)])
 
 
 if __name__ == '__main__':

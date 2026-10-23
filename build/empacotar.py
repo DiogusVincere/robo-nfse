@@ -1,7 +1,7 @@
 r"""Monta o pacote portátil para Windows da interface local: a pasta "Robo NFSe" e o zip dela.
 
     python build\empacotar.py
-        -> dist\Robo NFSe\  e  dist\robo-nfse-v2.0.0-windows.zip
+        -> dist\Robo NFSe\  e  dist\robo-nfse-v2.0.1-windows.zip
     python build\empacotar.py --versao 2.0.1 --sem-zip
 
 Precisa do Python com as bibliotecas do requirements.txt, do reportlab (para os PDFs irem no pacote) e do
@@ -86,7 +86,7 @@ def compactar(pacote: Path, zip_destino: Path) -> Path:
 
 def main() -> None:
     p = argparse.ArgumentParser(description='Monta o pacote portátil da interface local.')
-    p.add_argument('--versao', default='2.0.0')
+    p.add_argument('--versao', default='2.0.1')
     p.add_argument('--saida', default=str(RAIZ / 'dist'))
     p.add_argument('--trabalho', default=str(RAIZ / 'build' / 'pyinstaller'))
     p.add_argument('--sem-zip', action='store_true')

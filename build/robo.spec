@@ -12,7 +12,7 @@ from pathlib import Path
 
 RAIZ = Path(SPECPATH).parent  # SPECPATH é a pasta deste arquivo (build\)
 NOME = 'Robo NFSe'
-VERSAO = os.environ.get('ROBO_VERSAO', '2.0.0')
+VERSAO = os.environ.get('ROBO_VERSAO', '2.0.1')
 
 
 def gerar_icone(destino: Path):

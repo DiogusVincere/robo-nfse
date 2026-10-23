@@ -410,7 +410,7 @@
       ['Tomadas', t.tomadas, t.fora + ' de fora do município · ' + t.do_municipio + ' do município'],
       ['Prestadas', t.prestadas, moedaBR.format(t.valor_prestadas || 0) + ' em serviços'],
       ['Retido nas tomadas', moedaBR.format(t.retido_tomadas || 0), 'a empresa recolhe · ISS ' + moedaBR.format(t.iss_retido || 0)],
-      ['Retido nas prestadas', moedaBR.format(t.retido_prestadas || 0), 'os clientes retiveram · a empresa abate'],
+      ['Retido nas prestadas', moedaBR.format(t.retido_prestadas || 0), 'os clientes retiveram · a empresa abate · ISS ' + moedaBR.format(t.iss_retido_prestadas || 0)],
       ['Canceladas', t.canceladas, (t.conferir ? t.conferir + ' nota(s) para conferir' : '')],
     ];
     $('totais').innerHTML = cartoes.map((c) => '<div class="total"><small>' + escapar(c[0]) + '</small><strong>' + escapar(c[1]) + '</strong><span>' + escapar(c[2]) + '</span></div>').join('');

@@ -46,8 +46,9 @@ import robo_nfse as robo  # noqa: E402
 
 log = logging.getLogger('nfse.interface')
 
-VERSAO = '2.0.0'
+VERSAO = '2.0.1'
 PORTA_PADRAO = 8747
+AVISOS_DA_PASTA: list = []                           # o que deu errado ao preparar a pasta de dados (vai em /api/estado)
 PASTA_WEB = Path(os.path.abspath(__file__)).parent / 'web'
 TIPOS = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
          '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml'}
@@ -63,9 +64,17 @@ def pasta_de_estado() -> Path:
     # (o executável cria RoboNFSe para o interface.log antes de o servidor subir).
     for sub in ('estado', 'saida'):
         if (antiga / sub).is_dir() and not (nova / sub).exists():
-            with contextlib.suppress(OSError):
+            try:
                 nova.mkdir(parents=True, exist_ok=True)
                 (antiga / sub).rename(nova / sub)
+            except OSError as e:
+                # Sem a migração, a busca do CNPJ recomeça do NSU 0 (percorre o histórico inteiro): tem que ser dito.
+                aviso = (f'Não consegui mover {antiga / sub} para {nova / sub} ({e}). O estado da versão anterior '
+                         f'(último NSU por CNPJ) não foi migrado: a próxima busca recomeça do início. Feche o que '
+                         f'estiver usando a pasta antiga e abra o programa de novo, ou mova a pasta à mão.')
+                log.warning(aviso)
+                if aviso not in AVISOS_DA_PASTA:
+                    AVISOS_DA_PASTA.append(aviso)
     return nova / 'estado'
 
 
@@ -191,7 +200,6 @@ def resumo(resultados: list, comp: robo.Competencia) -> dict:
     ativas = [n for n, _ in notas if not n.cancelada]
     tomadas = [(n, s) for n, s in notas if n.papel != 'prestada']
     prestadas = [(n, s) for n, s in notas if n.papel == 'prestada']
-    retido = lambda papel: round(sum(n.retencoes.total for n in ativas if n.papel == papel), 2)   # noqa: E731
     return {
         'competencia': str(comp),
         'pasta_competencia': comp.pasta,
@@ -217,9 +225,12 @@ def resumo(resultados: list, comp: robo.Competencia) -> dict:
             'valor_tomadas': round(sum(n.valor_servico for n in ativas if n.papel != 'prestada'), 2),
             'valor_prestadas': round(sum(n.valor_servico for n in ativas if n.papel == 'prestada'), 2),
             'iss': round(sum(n.valor_iss for n in ativas), 2),
-            'iss_retido': round(sum(n.valor_iss for n in ativas if n.iss_retido), 2),
-            'retido_tomadas': retido('tomada'),
-            'retido_prestadas': retido('prestada'),
+            # ISS que a EMPRESA recolhe: retido por ela nas tomadas (o retido pelo intermediário não é dela, e o
+            # retido pelos clientes nas prestadas é o que ela abate — fica em iss_retido_prestadas)
+            'iss_retido': round(sum(robo.iss_retido_pela_empresa(n) for n in ativas), 2),
+            'iss_retido_prestadas': round(sum(n.retencoes.iss for n in ativas if n.papel == 'prestada'), 2),
+            'retido_tomadas': round(sum(r.retido('tomada') for r in resultados), 2),
+            'retido_prestadas': round(sum(r.retido('prestada') for r in resultados), 2),
             'com_retencao': sum(1 for n in ativas if n.retencoes.tem),
             'conferir': sum(1 for n in ativas if n.retencoes.divergencia()),
             'pendencias': sum(len(r.erros) for r in resultados),
@@ -448,7 +459,7 @@ class Tratador(BaseHTTPRequestHandler):
                 desde = int(dict(p.split('=', 1) for p in urlparse(self.path).query.split('&') if '=' in p).get('desde', 0))
             t = self.server.trabalho
             return self._json(200, {'versao': VERSAO, 'ocupado': self.server.ocupado(),
-                                    'estado_em': str(self.server.estado_em),
+                                    'estado_em': str(self.server.estado_em), 'avisos': list(AVISOS_DA_PASTA),
                                     'trabalho': t.estado(desde) if t else None})
         if caminho == '/api/baixar':
             t = self.server.trabalho

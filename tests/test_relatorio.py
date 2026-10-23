@@ -23,8 +23,8 @@ CABECALHO_NOTAS = ['Código', 'Papel', 'Fonte', 'Nº', 'Emissão', 'Prestador', 
                    'Município (IBGE)', 'Valor', 'Alíquota %', 'ISS', 'ISS retido', 'INSS retido', 'IRRF retido',
                    'PIS retido', 'COFINS retido', 'CSLL retida', 'CSRF retida', 'Total retido', 'Valor líquido',
                    'Retenções', 'Situação']
-CABECALHO_RETENCOES = ['Código', 'Empresa', 'Papel', 'Notas com retenção', 'ISS', 'INSS', 'IRRF', 'PIS', 'COFINS', 'CSLL',
-                       'CSRF (PIS+COFINS+CSLL)', 'Total']
+CABECALHO_RETENCOES = ['Código', 'Empresa', 'Papel', 'Notas com retenção', 'ISS', 'ISS pelo intermediário', 'INSS', 'IRRF',
+                       'PIS', 'COFINS', 'CSLL', 'CSRF (PIS+COFINS+CSLL)', 'Total']
 
 
 class TestGerarRelatorio(unittest.TestCase):
@@ -78,8 +78,8 @@ class TestGerarRelatorio(unittest.TestCase):
             self.assertEqual(linha7[22], 'INSS, IRRF, CSRF (PIS+COFINS+CSLL)')
             # Retenções: uma linha por empresa × papel que tem retenção (a prestada cancelada não conta)
             self.assertEqual(len(ret), 3)
-            self.assertEqual(list(ret[1]), ['100', e1.razao, 'tomada', 1, 20.0, 0, 0, 0, 0, 0, 0, 20.0])
-            self.assertEqual(list(ret[2]), ['100', e1.razao, 'prestada', 1, 0, 110.0, 15.0, 0, 0, 0, 46.5, 171.5])
+            self.assertEqual(list(ret[1]), ['100', e1.razao, 'tomada', 1, 20.0, 0, 0, 0, 0, 0, 0, 0, 20.0])
+            self.assertEqual(list(ret[2]), ['100', e1.razao, 'prestada', 1, 0, 0, 110.0, 15.0, 0, 0, 0, 46.5, 171.5])
             self.assertTrue(wb['Empresas']['A1'].font.bold)                    # cabeçalho formatado
             self.assertGreaterEqual(wb['Notas'].column_dimensions['L'].width, 10)
             wb.close()

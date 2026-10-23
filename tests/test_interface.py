@@ -117,6 +117,7 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(est['ocupado'])
         self.assertIsNone(est['trabalho'])
+        self.assertEqual(est['avisos'], [])                                  # nada deu errado na pasta de dados
         self.assertEqual(self.pedir('GET', '/api/baixar')[0], 404)
 
     def test_02_conferir_certificado(self):
@@ -207,6 +208,7 @@ class TestInterface(unittest.TestCase):
         self.assertEqual(tot['iss_retido'], 125.0)                        # 50 (SP, retido) + 75 (Nacional, retido)
         self.assertEqual(tot['retido_tomadas'], 125.0)
         self.assertEqual(tot['retido_prestadas'], 171.5)                  # INSS 110 + IRRF 15 + CSRF 46,50
+        self.assertEqual(tot['iss_retido_prestadas'], 0.0)
         self.assertEqual(tot['com_retencao'], 3)
         self.assertEqual(tot['conferir'], 0)
         self.assertEqual(sorted(n['numero'] for n in res['notas']), ['4521', '501', '88'])
@@ -312,6 +314,47 @@ class TestPastaDeEstado(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
             self.assertEqual(iface.pasta_de_estado(), Path(tmp) / 'RoboNFSe' / 'estado')
             self.assertFalse((Path(tmp) / 'RoboNFSe').exists())              # só cria quando precisa migrar
+
+    def test_falha_na_migracao_e_avisada(self):
+        """Se o Windows não deixar mover (pasta aberta, permissão), o programa segue — mas diz, no log e em
+        /api/estado, que o estado antigo não veio (a busca recomeça do NSU 0)."""
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'LOCALAPPDATA': tmp}):
+            antiga = Path(tmp) / 'RoboNFSeTomados'
+            (antiga / 'estado').mkdir(parents=True)
+            iface.AVISOS_DA_PASTA.clear()
+            with mock.patch.object(Path, 'rename', side_effect=OSError('em uso')),                     self.assertLogs(iface.log, level='WARNING') as cm:
+                self.assertEqual(iface.pasta_de_estado(), Path(tmp) / 'RoboNFSe' / 'estado')
+            self.assertTrue(any('não foi migrado' in m for m in cm.output))
+            self.assertEqual(len(iface.AVISOS_DA_PASTA), 1)
+            self.assertIn('RoboNFSeTomados', iface.AVISOS_DA_PASTA[0])
+            iface.pasta_de_estado()                                           # de novo: o mesmo aviso não se repete
+            self.assertEqual(len(iface.AVISOS_DA_PASTA), 1)
+            iface.AVISOS_DA_PASTA.clear()
+
+
+class TestResumo(unittest.TestCase):
+    """O resumo da tela soma por quem RECOLHE: ISS retido pelo intermediário não é da empresa, e o ISS que os clientes
+    retêm nas prestadas é abatimento, não recolhimento."""
+
+    def test_iss_retido_separa_tomadas_de_prestadas(self):
+        R = robo.Retencoes
+        e = suporte.empresa()
+        notas = [
+            suporte.nota('1', retencoes=R(iss=20.0, iss_por='tomador')),                       # a empresa reteve
+            suporte.nota('2', retencoes=R(iss=30.0, iss_por='intermediário', inss=11.0)),      # o intermediário reteve
+            suporte.nota('3', papel='prestada', retencoes=R(iss=40.0, iss_por='tomador', irrf=15.0)),
+            suporte.nota('4', retencoes=R(iss=99.0), cancelada=True),                           # cancelada não conta
+        ]
+        r = robo.ResultadoEmpresa(e, notas=[(n, 'ok') for n in notas])
+        t = iface.resumo([r], suporte.COMP)['totais']
+        self.assertEqual(t['iss_retido'], 20.0)
+        self.assertEqual(t['iss_retido_prestadas'], 40.0)
+        self.assertEqual(t['retido_tomadas'], 31.0)                           # 20 + INSS 11; sem os 30 do intermediário
+        self.assertEqual(t['retido_prestadas'], 55.0)                         # 40 + 15
+        self.assertEqual(r.retido('tomada'), 31.0)
+        self.assertEqual(r.retido('prestada'), 55.0)
 
 
 if __name__ == '__main__':
