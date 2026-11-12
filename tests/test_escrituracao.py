@@ -326,5 +326,40 @@ class TestExtrairEmpresa(Base):
             robo.extrair_empresa(self.empresa, COMP, None, SenhaQualquer(), self.estado, {}, robo.PAPEIS)
 
 
+class FonteSPQueRegistra:
+    """SP de mentira: devolve uma tomada e uma prestada e anota se consultar_emitidas chegou a ser chamada."""
+
+    def __init__(self):
+        self.emitidas_chamada = False
+
+    def consultar_recebidas(self, cert, senha, comp):
+        return [tl.XML_SP]
+
+    def consultar_emitidas(self, cert, senha, comp):
+        self.emitidas_chamada = True
+        return [tl.XML_SP]
+
+
+class TestPrestadasSPSoDeSaoPaulo(Base):
+    """Na fonte SP (Nota Paulistana), as prestadas — ConsultaNFeEmitidas — só são buscadas para empresas de São
+    Paulo; sem inscrição municipal aqui a prefeitura rejeita e derrubava a empresa inteira. As tomadas valem p/ todas;
+    as prestadas de quem é de fora vêm pelo Nacional."""
+
+    def extrair(self, empresa, sp):
+        return robo.extrair_empresa(empresa, COMP, object(), SenhaQualquer(), self.estado, {'SP': sp}, robo.PAPEIS)
+
+    def test_empresa_de_fora_nao_busca_prestadas_em_sp(self):
+        sp = FonteSPQueRegistra()
+        notas = self.extrair(suporte.empresa('100', municipio='3509502'), sp)   # não é de São Paulo
+        self.assertFalse(sp.emitidas_chamada)                                   # não chamou ConsultaNFeEmitidas
+        self.assertEqual([n.papel for n in notas], ['tomada'])                  # mas a tomada de SP veio
+
+    def test_empresa_de_sp_busca_tomadas_e_prestadas(self):
+        sp = FonteSPQueRegistra()
+        notas = self.extrair(suporte.empresa('100', municipio=robo.IBGE_SAO_PAULO), sp)   # é de São Paulo (3550308)
+        self.assertTrue(sp.emitidas_chamada)
+        self.assertEqual(sorted(n.papel for n in notas), ['prestada', 'tomada'])
+
+
 if __name__ == '__main__':
     unittest.main()

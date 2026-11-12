@@ -33,7 +33,7 @@ Uma execução, ponta a ponta, para uma lista de empresas e uma competência:
 
 | Etapa | O que acontece | Como |
 |---|---|---|
-| **1. Extração** | Busca as NFS-e **tomadas** e **prestadas** por cada empresa, 100% em segundo plano, com o certificado A1 dela | Nota Paulistana (SOAP assinado com XMLDSig + mTLS: `ConsultaNFeRecebidas` para as tomadas e `ConsultaNFeEmitidas` para as prestadas) e Sistema Nacional NFS-e (API REST por NSU, mTLS, incremental, com pausa, backoff e `Retry-After`; a distribuição devolve tudo em que o CNPJ aparece e o robô separa pelo papel) |
+| **1. Extração** | Busca as NFS-e **tomadas** e **prestadas** por cada empresa, 100% em segundo plano, com o certificado A1 dela | Nota Paulistana (SOAP assinado com XMLDSig + mTLS: `ConsultaNFeRecebidas` para as tomadas e `ConsultaNFeEmitidas` para as prestadas — estas **só para empresas de São Paulo**, que têm inscrição municipal aqui; as prestadas das demais vêm pelo Nacional) e Sistema Nacional NFS-e (API REST por NSU, mTLS, incremental, com pausa, backoff e `Retry-After`; a distribuição devolve tudo em que o CNPJ aparece e o robô separa pelo papel) |
 | **2. Organização** | Cada XML vai para a pasta do cliente na competência certa (competência = mês da **emissão**), em `Tomados/` ou `Prestados/`, com espelho em PDF | Reaproveita a pasta do mês que a equipe já tenha criado à mão (`09-2026`, `09.2026`, `092026`); documentos de outras competências, ou de um papel que não foi pedido naquela execução, são arquivados, não perdidos |
 | **3. Classificação e retenções** | Nas tomadas, separa "do município" (não se declara), "fora do município" (precisa ser escriturada) e canceladas. Em toda nota, lê o que foi retido | Pelo código IBGE do município do **prestador**; deduplica a mesma nota vinda pelas duas fontes. As retenções saem dos campos do XML (ver [Retenções](#retenções)), nunca de cálculo |
 | **4. Escrituração** | Declara no portal municipal as tomadas de fora | Consulta anti-duplicidade antes; travas antes de gravar (número do documento e ISS recalculado); salva o comprovante; confirma de novo no portal; renova a sessão se o portal derrubar |
@@ -271,6 +271,8 @@ certificado A1 da empresa (mTLS) — hoje não existe acesso por procuração do
   mensagem `PedidoConsultaNFePeriodo` assinada (XMLDSig enveloped, RSA-SHA1) e enviada como texto dentro de
   `MensagemXML`; o `SOAPAction` é `http://www.prefeitura.sp.gov.br/nfe/ws/consultaNFeRecebidas` /
   `…/consultaNFeEmitidas`. Até 50 notas por página; o cliente segue até uma página vir com menos de 50.
+  `ConsultaNFeEmitidas` (prestadas) só é chamada para empresas de **São Paulo** (município IBGE `3550308`): sem
+  inscrição municipal aqui a prefeitura rejeita a consulta — as prestadas das demais empresas vêm pelo Nacional.
 - **Sistema Nacional NFS-e (Ambiente de Dados Nacional)**: REST em
   `https://adn.nfse.gov.br/contribuintes/DFe/{NSU}?lote=true&cnpjConsulta={CNPJ}`, que devolve até 50 documentos
   a partir do NSU pedido (XML em base64, às vezes gzip) em que o CNPJ aparece como tomador, emitente ou

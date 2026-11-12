@@ -25,7 +25,8 @@ O QUE O ROBÔ FAZ (uma execução, ponta a ponta)
   ETAPA 1  EXTRAÇÃO, 100% em segundo plano (sem navegador), com o certificado A1 de cada empresa, das notas que ela
            TOMOU e das que ela PRESTOU:
            • Prefeitura de São Paulo (Nota Paulistana) — web service SOAP, pedido assinado (XMLDSig) + mTLS:
-             ConsultaNFeRecebidas (tomadas) e ConsultaNFeEmitidas (prestadas);
+             ConsultaNFeRecebidas (tomadas) e, só para empresas de São Paulo (com inscrição municipal aqui),
+             ConsultaNFeEmitidas (prestadas); as prestadas das demais vêm pelo Nacional;
            • Sistema Nacional NFS-e (ADN) — API REST de distribuição de documentos por NSU, mTLS, incremental
              (guarda o último NSU por CNPJ), com controle de rate limit e backoff. A distribuição devolve tudo em
              que o CNPJ aparece; o robô separa pelo papel (tomador = tomada, emitente = prestada).
@@ -96,6 +97,8 @@ log = logging.getLogger('nfse')
 
 PAPEIS = ('tomada', 'prestada')                         # os dois lados de uma NFS-e, do ponto de vista da empresa
 PASTA_DO_PAPEL = {'tomada': 'Tomados', 'prestada': 'Prestados'}
+IBGE_SAO_PAULO = '3550308'                              # município de São Paulo — só quem é daqui tem inscrição municipal
+#                                                         na Nota Paulistana (e, logo, prestadas na fonte SP)
 
 
 # =====================================================================================================================
@@ -713,7 +716,7 @@ def nota_de_sp(xml: str, papel: str = 'tomada') -> Nota:
         emissao=emissao, competencia=Competencia(emissao.year, emissao.month) if emissao else None,
         prestador_cnpj=digitos(local(prest, 'CNPJ')),
         prestador_nome=local(raiz, 'RazaoSocialPrestador') or '',
-        prestador_municipio_ibge=local(end_prest, 'Cidade') or '3550308',
+        prestador_municipio_ibge=local(end_prest, 'Cidade') or IBGE_SAO_PAULO,
         tomador_cnpj=digitos(local(toma, 'CNPJ')),
         tomador_nome=local(raiz, 'RazaoSocialTomador') or '',
         tomador_municipio_ibge=local(end_toma, 'Cidade') or '',
@@ -1168,7 +1171,10 @@ def extrair_empresa(empresa: Empresa, comp: Competencia, cert: Optional[Certific
         sp = fontes['SP']
         if 'tomada' in papeis:
             notas += [nota_de_sp(x, 'tomada') for x in sp.consultar_recebidas(cert, senha, comp)]
-        if 'prestada' in papeis:
+        # Prestadas na Nota Paulistana só para quem é de São Paulo: sem inscrição municipal aqui, a prefeitura
+        # rejeita ConsultaNFeEmitidas (e o erro derrubava a empresa inteira). As prestadas dos demais vêm pelo
+        # ambiente Nacional abaixo; na fonte SP eles ficam só com as tomadas.
+        if 'prestada' in papeis and empresa.municipio_ibge == IBGE_SAO_PAULO:
             notas += [nota_de_sp(x, 'prestada') for x in sp.consultar_emitidas(cert, senha, comp)]
     if 'Nacional' in fontes:
         docs, ultimo = fontes['Nacional'].distribuir(cert, senha, estado.ultimo_nsu(empresa.cnpj))
